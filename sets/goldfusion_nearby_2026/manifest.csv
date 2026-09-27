@@ -1,0 +1,19 @@
+file,filters,variant,change_from_center,status
+filter_001_center.set,001,center,,2026 results already supplied
+filter_001_be_04.set,001,be_04,BE_TriggerUSD=0.4,run in MT4
+filter_001_be_06.set,001,be_06,BE_TriggerUSD=0.6,run in MT4
+filter_001_start_08.set,001,start_08,TrailStartUSD=0.8,run in MT4
+filter_001_start_12.set,001,start_12,TrailStartUSD=1.2,run in MT4
+filter_001_dist_08.set,001,dist_08,TrailDistUSD=0.8,run in MT4
+filter_001_dist_12.set,001,dist_12,TrailDistUSD=1.2,run in MT4
+filter_001_session_14_19.set,001,session_14_19,SessionStartHour=14,run in MT4
+filter_001_session_15_20.set,001,session_15_20,SessionEndHour=20,run in MT4
+filter_101_center.set,101,center,,2026 results already supplied
+filter_101_be_04.set,101,be_04,BE_TriggerUSD=0.4,run in MT4
+filter_101_be_06.set,101,be_06,BE_TriggerUSD=0.6,run in MT4
+filter_101_start_08.set,101,start_08,TrailStartUSD=0.8,run in MT4
+filter_101_start_12.set,101,start_12,TrailStartUSD=1.2,run in MT4
+filter_101_dist_08.set,101,dist_08,TrailDistUSD=0.8,run in MT4
+filter_101_dist_12.set,101,dist_12,TrailDistUSD=1.2,run in MT4
+filter_101_session_14_19.set,101,session_14_19,SessionStartHour=14,run in MT4
+filter_101_session_15_20.set,101,session_15_20,SessionEndHour=20,run in MT4
