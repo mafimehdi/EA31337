@@ -14,6 +14,21 @@ support the same market hypothesis and none of them cancels the other ones out.
 Each file contains all 96 inputs, so loading it fully replaces the previous settings
 (including the magic number, which is unique per preset - several presets can run side by side).
 
+## Prebuilt archives (download)
+
+Two ready-to-download archives are kept in `archive/`:
+
+- `AlgoX_SuperTrend_Pro_EA_complete.zip` - EA source, all 12 presets, this README, the generator
+  script and the Persian guide.
+- `AlgoX_Set_Files_Only.zip` - only the `.set` files, flat, ready to be copied into `MQL4/Presets`.
+
+Download (branch `arena/01a0e88e-ea31337`):
+
+- complete:
+  `https://github.com/mafimehdi/EA31337/raw/arena/01a0e88e-ea31337/sets/AlgoX_SuperTrend_Pro_EA/archive/AlgoX_SuperTrend_Pro_EA_complete.zip`
+- set files only:
+  `https://github.com/mafimehdi/EA31337/raw/arena/01a0e88e-ea31337/sets/AlgoX_SuperTrend_Pro_EA/archive/AlgoX_Set_Files_Only.zip`
+
 ## Filter families
 
 The filters of the EA are grouped by what they actually measure. This is the base of every
