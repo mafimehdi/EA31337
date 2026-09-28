@@ -333,8 +333,8 @@ PRESETS = [
             "The documented combination: the higher timeframe trend (M15 EMA 50) is required and "
             "the MACD histogram must agree, while RSI (55/45 levels), the intraday regime "
             "(EMA 5/10/20) and the relative volume carry the rebalanced score weight. The trade targets TP2 with the "
-            "stop moved to break-even at the TP1 distance, and it only fires when ATR(5) >= 1.0 "
-            "USD, ADX is strong and the geometry is at least 3x the spread - the research "
+            "stop moved to break-even at the TP1 distance, and it only fires when ATR(5) is at "
+            "least 1.0 USD, ADX is strong and the geometry is at least 3x the spread - the research "
             "thresholds for a 0.47 USD spread on gold M1."
         ),
         "overrides": {
