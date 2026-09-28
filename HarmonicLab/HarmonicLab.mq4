@@ -11,7 +11,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Harmonic Lab MT4 port"
 #property link      ""
-#property version   "1.03"
+#property version   "1.04"
 #property strict
 
 #define HL_NA       EMPTY_VALUE
@@ -58,7 +58,7 @@ input ENUM_HL_DIR    InpDirection      = HL_DIR_BOTH;
 input string         InpSessionHours   = "0000-0000";
 input int            InpUtcOffset      = 0;
 input int            InpMaxPerBar      = 1;
-input int            InpMaxActive      = 2;                 // gold 0.01 lot on $500 cannot stack 5
+input int            InpMaxActive      = 1;                 // $500 gold: one position; 6-loss streak was -$106 with 2
 input bool           InpNoSame         = true;
 input int            InpMaxAge         = 128;
 input ENUM_HL_OUTSIDE InpOutsideBar    = HL_OUT_CONTINUE;
@@ -187,6 +187,7 @@ input double         InpLots           = 0.10;
 input double         InpRiskPercent    = 0.5;
 input int            InpSlippage       = 30;
 input bool           InpBrokerStops    = true;              // gold M15 candles overrun close-gated SL
+input double         InpMinRR          = 1.0;               // skip if T1 reward / initial risk < this (0 = off)
 
 //====================================================================
 // Data model
@@ -1222,6 +1223,17 @@ int OpenTrade(Pattern *p)
   {
    if(!CanTradeNow()) return(-1);
    if(p.traded && p.ticket>0) return(p.ticket);
+   if(InpMinRR > 0.0)
+     {
+      double riskDist = MathAbs(p.entry - p.stop);
+      double t1Dist   = MathAbs(p.t1 - p.entry);
+      if(riskDist > 0.0 && t1Dist / riskDist < InpMinRR)
+        {
+         Print("OpenTrade skip R:R ", DoubleToString(t1Dist/riskDist,2),
+               " < ", DoubleToString(InpMinRR,2), " ", p.name);
+         return(-1);
+        }
+     }
    double lots = LotsFor(p);
    if(lots <= 0.0) return(-1);
    int type = (p.side==1) ? OP_BUY : OP_SELL;
