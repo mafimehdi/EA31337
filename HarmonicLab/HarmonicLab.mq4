@@ -11,7 +11,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Harmonic Lab MT4 port"
 #property link      ""
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 
 #define HL_NA       EMPTY_VALUE
@@ -23,8 +23,9 @@
 bool   HlNa(const double v) { return (v == HL_NA); }
 
 //====================================================================
-// Inputs — logic-affecting. Defaults are the M15 compatible preset
-// (see HarmonicLab/M15_COMPATIBILITY.md). Visual-only inputs are not ported.
+// Inputs — logic-affecting. Defaults = M15 Active (v1.02, after XAUUSD
+// backtest: the v1.01 strict pack produced only 7 trades in 9 months).
+// See HarmonicLab/M15_COMPATIBILITY.md. Visual-only inputs are not ported.
 //====================================================================
 
 enum ENUM_HL_DMODE   { HL_DMODE_DEVELOPING=0, HL_DMODE_CONFIRMED=1 };
@@ -41,44 +42,44 @@ enum ENUM_HL_TREND   { HL_TREND_OFF=0, HL_TREND_EMA=1, HL_TREND_SMA=2 };
 enum ENUM_HL_ALERT   { HL_ALERT_TEXT=0, HL_ALERT_JSON=1 };
 enum ENUM_HL_LOTS    { HL_LOT_FIXED=0, HL_LOT_RISK=1 };
 
-// 01 Detection — M15 preset
-input int            InpDepth          = 10;                // Minimum ZigZag Period (M15: 10 = 2.5h)
-input ENUM_HL_DMODE  InpDMode          = HL_DMODE_DEVELOPING; // D detection mode
-input int            InpConfirmBars    = 3;                 // Pivot confirmation bars (M15: 45m)
-input bool           InpMultiscale     = false;             // Search 1x / 2x / 3x depth
-input bool           InpSearchNested   = true;              // Search nested XABCD combinations
-input int            InpCandidateLimit = 20;                // Maximum candidate geometries per depth
-input double         InpErrorPct       = 6.0;               // Error Rate % (tighter on M15)
-input int            InpMinSize        = 36;                // Minimum pattern bars (M15: 9h)
-input int            InpMaxSize        = 144;               // Maximum pattern bars (M15: 36h)
-input double         InpMinHeight      = 0.20;              // Minimum pattern height % of price
-input int            InpMinCD          = 4;                 // Minimum C–D bars (M15: 1h)
-input ENUM_HL_DIR    InpDirection      = HL_DIR_BOTH;       // Direction (trend filter biases)
-input string         InpSessionHours   = "0000-0000";       // Detection session (HHMM-HHMM, 0000-0000 = all)
-input int            InpUtcOffset      = 0;                 // Session UTC offset
-input int            InpMaxPerBar      = 1;                 // Maximum new patterns per bar
-input int            InpMaxActive      = 3;                 // Maximum active patterns
-input bool           InpNoSame         = true;              // Block same active pattern / direction
-input int            InpMaxAge         = 128;               // Expire after bars from detection (M15: 32h)
-input ENUM_HL_OUTSIDE InpOutsideBar    = HL_OUT_CONTINUE;   // Two-sided extreme bar
-input ENUM_HL_SWING  InpSwingMethod    = HL_SWING_PIVOT;    // Confirmed pivots (stable XABC on M15)
+// 01 Detection — M15 Active (v1.02). Strict pack is HarmonicLab_M15_STRICT.set
+input int            InpDepth          = 8;                 // Minimum ZigZag Period (M15: 2h; 2x/3x via multiscale)
+input ENUM_HL_DMODE  InpDMode          = HL_DMODE_DEVELOPING;
+input int            InpConfirmBars    = 2;                 // used if swing = confirmed pivots
+input bool           InpMultiscale     = true;              // 1x/2x/3x depth on the same M15 chart
+input bool           InpSearchNested   = true;
+input int            InpCandidateLimit = 40;
+input double         InpErrorPct       = 8.0;               // original band; 6% starved gold M15
+input int            InpMinSize        = 24;                // 6h floor (was 36 / 9h)
+input int            InpMaxSize        = 160;               // 40h
+input double         InpMinHeight      = 0.12;              // % of D; gold ~$3–5, FX ~12 pips
+input int            InpMinCD          = 2;                 // 30m C–D
+input ENUM_HL_DIR    InpDirection      = HL_DIR_BOTH;
+input string         InpSessionHours   = "0000-0000";
+input int            InpUtcOffset      = 0;
+input int            InpMaxPerBar      = 2;
+input int            InpMaxActive      = 5;
+input bool           InpNoSame         = true;
+input int            InpMaxAge         = 160;               // 40h
+input ENUM_HL_OUTSIDE InpOutsideBar    = HL_OUT_CONTINUE;   // one endpoint per bar (news outside bars)
+input ENUM_HL_SWING  InpSwingMethod    = HL_SWING_ROLLING;  // timely D on M15 gold; no 45m XABC lag
 
-// 02 Pattern families — reversal-at-D core only (see M15_COMPATIBILITY.md)
+// 02 Pattern families — reversal-at-D, plus distinct extras for frequency
 input bool           InpUseGartley     = true;
 input bool           InpUseButterfly   = true;
 input bool           InpUseBat         = true;
 input bool           InpUseCrab        = true;
-input bool           InpUseAltBat      = false;             // overlaps Bat B-range
+input bool           InpUseAltBat      = true;              // D=1.13, not the same as Bat D=0.886
 input bool           InpUseDeepCrab    = true;
 input bool           InpUseCypher      = true;
-input double         InpCypherMin      = 1.272;             // Cypher minimum XC / XA (stricter)
-input bool           InpUseABCD        = false;             // would double-trade same D as XABCD
+input double         InpCypherMin      = 1.13;
+input bool           InpUseABCD        = true;              // own key; time filter on
 input bool           InpUseWhiteSwan   = false;
 input bool           InpUseBlackSwan   = false;
 input bool           InpUseShark       = true;
-input bool           InpUseNenStar     = false;             // overlaps Shark/Cypher extensions
-input bool           InpUseLeonardo    = false;             // Gartley/Bat hybrid leftover
-input bool           InpUsePartizan    = false;             // catch-all ratios, not tradable
+input bool           InpUseNenStar     = true;              // D=1.272 vs Shark 0.886–1.13
+input bool           InpUseLeonardo    = false;
+input bool           InpUsePartizan    = false;
 input bool           InpUseFiveZero    = true;
 input bool           InpUseAntiGartley = false;
 input bool           InpUseAntiButterfly = false;
@@ -87,8 +88,8 @@ input bool           InpUseAntiCrab    = false;
 input bool           InpUseAntiShark   = false;
 input bool           InpUseAntiCypher  = false;
 input bool           InpUseAntiNenStar = false;
-input bool           InpUseThreeDrive  = false;             // overlaps 5-0
-input bool           InpUseDoubleTop   = false;             // breakout playbook, not PRZ
+input bool           InpUseThreeDrive  = false;
+input bool           InpUseDoubleTop   = false;
 input bool           InpUseDoubleBottom= false;
 input bool           InpUseHS          = false;
 input bool           InpUseIHS         = false;
@@ -114,20 +115,20 @@ input ENUM_HL_KEEP   InpKeepUntil      = HL_KEEP_T2;        // trail after T1, f
 input bool           InpUseRR          = false;             // keep harmonic measured move
 input double         InpRR1            = 1.0;
 input double         InpRR2            = 2.0;
-input ENUM_HL_ENTRY  InpEntryMode      = HL_ENTRY_CLOSE;    // Close confirmation (no wick fill)
+input ENUM_HL_ENTRY  InpEntryMode      = HL_ENTRY_TOUCH;    // wick touch at close eval; gold rarely closes beyond entry
 
-// 04 Stop and validation — Close package + trail after T1
-input ENUM_HL_STOPM  InpStopMode       = HL_STOP_TRAIL;     // initial SL = PRZ, then trail
-input double         InpManualPct      = 1.0;               // unused unless Stop = Manual
-input double         InpZonePadPct     = 10.0;              // M15 spread/spike pad % of CD
-input double         InpBePct          = 0.0;               // unused unless Stop = Break even
+// 04 Stop and validation
+input ENUM_HL_STOPM  InpStopMode       = HL_STOP_TRAIL;
+input double         InpManualPct      = 1.0;
+input double         InpZonePadPct     = 12.0;              // gold spread vs CD
+input double         InpBePct          = 0.0;
 input ENUM_HL_TRAIL  InpTrailAfter     = HL_TRAIL_T1;
-input double         InpTrailMult      = 0.8;               // 0.8 × (T1−Entry) from extreme
+input double         InpTrailMult      = 1.0;
 input ENUM_HL_SRC    InpInvalidSource  = HL_SRC_CLOSE;
-input bool           InpRequireEntrySide = true;            // do not chase a run already past entry
-input double         InpEntryOvershoot = 0.15;              // 0.15% slack for spread
-input bool           InpRequireZone    = true;              // D close must stay in PRZ
-input ENUM_HL_SRC    InpStopSource     = HL_SRC_CLOSE;      // wick-stop would fight M15 noise
+input bool           InpRequireEntrySide = false;           // gold often already running at discovery
+input double         InpEntryOvershoot = 0.40;
+input bool           InpRequireZone    = false;             // gold D often closes outside PRZ after a valid wick
+input ENUM_HL_SRC    InpStopSource     = HL_SRC_CLOSE;
 
 // 07 / 08 Panel date + alerts
 input datetime       InpStartDate      = D'2021.01.01 00:00';
@@ -159,33 +160,33 @@ input string         InpSdConfluenceMark = "⭐";
 
 // 10 Performance
 input int            InpPerfMinTrades  = 5;
-input int            InpPerfAutoMin    = 50;                // skip family if T1 win% < 50 after 5 closes
+input int            InpPerfAutoMin    = 0;                 // off until the sample is large; 50% killed families too early
 
-// 11 Trend filter — EMA 200 on M15 ≈ 50h / 2.1d regime
-input ENUM_HL_TREND  InpTrendMode      = HL_TREND_EMA;
+// 11 Trend filter — OFF: harmonics are reversals; EMA200 on M15 blocked most gold longs
+input ENUM_HL_TREND  InpTrendMode      = HL_TREND_OFF;
 input int            InpTrendLen       = 200;
 
 // 12 Quality
-input int            InpQualityMin     = 60;                // 0-100; 60 ≈ in-band with one soft ratio
+input int            InpQualityMin     = 40;                // 60 + error 6% left almost no gold M15 D's
 
-// 13 RSI divergence (mark only, RSI 14 = 3.5h on M15)
+// 13 RSI divergence (mark only)
 input bool           InpDivShow        = true;
 input string         InpDivMark        = "↯";
 
-// 14 Volume confirmation (mark only — tick volume, do not require)
+// 14 Volume (mark only)
 input bool           InpVolShow        = true;
-input double         InpVolMult        = 1.8;
+input double         InpVolMult        = 1.5;
 input string         InpVolMark        = "⚡";
 input bool           InpVolRequire     = false;
 
 // EA execution
 input bool           InpTradeEnable    = true;
-input int            InpMagic          = 3133715;           // M15 magic
+input int            InpMagic          = 3133715;
 input ENUM_HL_LOTS   InpLotMode        = HL_LOT_RISK;
 input double         InpLots           = 0.10;
-input double         InpRiskPercent    = 0.5;               // 0.5% × max 3 actives ≈ 1.5% correlated
-input int            InpSlippage       = 20;
-input bool           InpBrokerStops    = false;             // must stay off with Close stop source
+input double         InpRiskPercent    = 1.0;               // 0.5% of $500 was ~$2.50/trade — invisible on gold
+input int            InpSlippage       = 30;
+input bool           InpBrokerStops    = false;
 
 //====================================================================
 // Data model
