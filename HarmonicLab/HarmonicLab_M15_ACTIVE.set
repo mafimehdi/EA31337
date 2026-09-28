@@ -1,0 +1,28 @@
+; ARCHIVE — v1.02 Active. XAUUSD M15 Jan–Sep 2026: 114 trades, PF 0.72, 98% DD.
+; Do not use. Kept only for A/B.
+InpDepth=8
+InpMultiscale=true
+InpErrorPct=8.0
+InpMinSize=24
+InpMinHeight=0.12
+InpMinCD=2
+InpMaxPerBar=2
+InpMaxActive=5
+InpMaxAge=160
+InpSwingMethod=0
+InpUseAltBat=true
+InpUseABCD=true
+InpUseNenStar=true
+InpCypherMin=1.13
+InpKeepUntil=1
+InpEntryMode=1
+InpStopMode=3
+InpZonePadPct=12.0
+InpTrailMult=1.0
+InpRequireEntrySide=false
+InpRequireZone=false
+InpQualityMin=40
+InpTrendMode=0
+InpRiskPercent=1.0
+InpBrokerStops=false
+InpMagic=3133715

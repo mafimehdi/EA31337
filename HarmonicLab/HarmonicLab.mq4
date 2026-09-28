@@ -11,7 +11,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Harmonic Lab MT4 port"
 #property link      ""
-#property version   "1.02"
+#property version   "1.03"
 #property strict
 
 #define HL_NA       EMPTY_VALUE
@@ -23,9 +23,9 @@
 bool   HlNa(const double v) { return (v == HL_NA); }
 
 //====================================================================
-// Inputs — logic-affecting. Defaults = M15 Active (v1.02, after XAUUSD
-// backtest: the v1.01 strict pack produced only 7 trades in 9 months).
-// See HarmonicLab/M15_COMPATIBILITY.md. Visual-only inputs are not ported.
+// Inputs — M15 Balanced v1.03.
+// v1.01 Strict: 7 trades, PF 1.73.  v1.02 Active: 114 trades, PF 0.72, 98% DD.
+// This pack keeps frequency between those two and sends broker SL/TP (gold).
 //====================================================================
 
 enum ENUM_HL_DMODE   { HL_DMODE_DEVELOPING=0, HL_DMODE_CONFIRMED=1 };
@@ -42,42 +42,42 @@ enum ENUM_HL_TREND   { HL_TREND_OFF=0, HL_TREND_EMA=1, HL_TREND_SMA=2 };
 enum ENUM_HL_ALERT   { HL_ALERT_TEXT=0, HL_ALERT_JSON=1 };
 enum ENUM_HL_LOTS    { HL_LOT_FIXED=0, HL_LOT_RISK=1 };
 
-// 01 Detection — M15 Active (v1.02). Strict pack is HarmonicLab_M15_STRICT.set
-input int            InpDepth          = 8;                 // Minimum ZigZag Period (M15: 2h; 2x/3x via multiscale)
+// 01 Detection — M15 Balanced (v1.03)
+input int            InpDepth          = 8;
 input ENUM_HL_DMODE  InpDMode          = HL_DMODE_DEVELOPING;
-input int            InpConfirmBars    = 2;                 // used if swing = confirmed pivots
-input bool           InpMultiscale     = true;              // 1x/2x/3x depth on the same M15 chart
+input int            InpConfirmBars    = 2;
+input bool           InpMultiscale     = false;             // 2x/3x on gold M15 added the losing extras
 input bool           InpSearchNested   = true;
-input int            InpCandidateLimit = 40;
-input double         InpErrorPct       = 8.0;               // original band; 6% starved gold M15
-input int            InpMinSize        = 24;                // 6h floor (was 36 / 9h)
-input int            InpMaxSize        = 160;               // 40h
-input double         InpMinHeight      = 0.12;              // % of D; gold ~$3–5, FX ~12 pips
-input int            InpMinCD          = 2;                 // 30m C–D
+input int            InpCandidateLimit = 30;
+input double         InpErrorPct       = 7.0;
+input int            InpMinSize        = 28;                // 7h
+input int            InpMaxSize        = 150;
+input double         InpMinHeight      = 0.15;
+input int            InpMinCD          = 3;
 input ENUM_HL_DIR    InpDirection      = HL_DIR_BOTH;
 input string         InpSessionHours   = "0000-0000";
 input int            InpUtcOffset      = 0;
-input int            InpMaxPerBar      = 2;
-input int            InpMaxActive      = 5;
+input int            InpMaxPerBar      = 1;
+input int            InpMaxActive      = 2;                 // gold 0.01 lot on $500 cannot stack 5
 input bool           InpNoSame         = true;
-input int            InpMaxAge         = 160;               // 40h
-input ENUM_HL_OUTSIDE InpOutsideBar    = HL_OUT_CONTINUE;   // one endpoint per bar (news outside bars)
-input ENUM_HL_SWING  InpSwingMethod    = HL_SWING_ROLLING;  // timely D on M15 gold; no 45m XABC lag
+input int            InpMaxAge         = 128;
+input ENUM_HL_OUTSIDE InpOutsideBar    = HL_OUT_CONTINUE;
+input ENUM_HL_SWING  InpSwingMethod    = HL_SWING_ROLLING;
 
-// 02 Pattern families — reversal-at-D, plus distinct extras for frequency
+// 02 Pattern families — core reversal only (Active extras were net losers)
 input bool           InpUseGartley     = true;
 input bool           InpUseButterfly   = true;
 input bool           InpUseBat         = true;
 input bool           InpUseCrab        = true;
-input bool           InpUseAltBat      = true;              // D=1.13, not the same as Bat D=0.886
+input bool           InpUseAltBat      = false;
 input bool           InpUseDeepCrab    = true;
 input bool           InpUseCypher      = true;
 input double         InpCypherMin      = 1.13;
-input bool           InpUseABCD        = true;              // own key; time filter on
+input bool           InpUseABCD        = false;
 input bool           InpUseWhiteSwan   = false;
 input bool           InpUseBlackSwan   = false;
 input bool           InpUseShark       = true;
-input bool           InpUseNenStar     = true;              // D=1.272 vs Shark 0.886–1.13
+input bool           InpUseNenStar     = false;
 input bool           InpUseLeonardo    = false;
 input bool           InpUsePartizan    = false;
 input bool           InpUseFiveZero    = true;
@@ -111,16 +111,16 @@ input ENUM_HL_LBASIS InpLevelBasis     = HL_LB_STANDARD;    // Bat uses AD, othe
 input double         InpEntryPct       = 10.0;
 input double         InpT1Pct          = 40.0;
 input double         InpT2Pct          = 94.0;
-input ENUM_HL_KEEP   InpKeepUntil      = HL_KEEP_T2;        // trail after T1, finish at T2
-input bool           InpUseRR          = false;             // keep harmonic measured move
+input ENUM_HL_KEEP   InpKeepUntil      = HL_KEEP_T1;        // 45% WR cannot hunt T2 on gold M15
+input bool           InpUseRR          = false;
 input double         InpRR1            = 1.0;
 input double         InpRR2            = 2.0;
-input ENUM_HL_ENTRY  InpEntryMode      = HL_ENTRY_TOUCH;    // wick touch at close eval; gold rarely closes beyond entry
+input ENUM_HL_ENTRY  InpEntryMode      = HL_ENTRY_TOUCH;
 
 // 04 Stop and validation
-input ENUM_HL_STOPM  InpStopMode       = HL_STOP_TRAIL;
+input ENUM_HL_STOPM  InpStopMode       = HL_STOP_ZONE;      // hard PRZ SL via broker
 input double         InpManualPct      = 1.0;
-input double         InpZonePadPct     = 12.0;              // gold spread vs CD
+input double         InpZonePadPct     = 12.0;
 input double         InpBePct          = 0.0;
 input ENUM_HL_TRAIL  InpTrailAfter     = HL_TRAIL_T1;
 input double         InpTrailMult      = 1.0;
@@ -167,7 +167,7 @@ input ENUM_HL_TREND  InpTrendMode      = HL_TREND_OFF;
 input int            InpTrendLen       = 200;
 
 // 12 Quality
-input int            InpQualityMin     = 40;                // 60 + error 6% left almost no gold M15 D's
+input int            InpQualityMin     = 50;
 
 // 13 RSI divergence (mark only)
 input bool           InpDivShow        = true;
@@ -184,9 +184,9 @@ input bool           InpTradeEnable    = true;
 input int            InpMagic          = 3133715;
 input ENUM_HL_LOTS   InpLotMode        = HL_LOT_RISK;
 input double         InpLots           = 0.10;
-input double         InpRiskPercent    = 1.0;               // 0.5% of $500 was ~$2.50/trade — invisible on gold
+input double         InpRiskPercent    = 0.5;
 input int            InpSlippage       = 30;
-input bool           InpBrokerStops    = false;
+input bool           InpBrokerStops    = true;              // gold M15 candles overrun close-gated SL
 
 //====================================================================
 // Data model
@@ -1199,7 +1199,16 @@ double LotsFor(Pattern *p)
    double dist = MathAbs(p.entry - p.stop);
    if(dist < ts) dist = ts;
    double lots = riskMoney / (dist / ts * tickVal);
-   return(NormLot(lots));
+   lots = NormLot(lots);
+   double actualRisk = lots * dist / ts * tickVal;
+   // Gold 0.01 min lot on a $500 account often exceeds 1% — skip rather than blow the account.
+   if(actualRisk > riskMoney * 2.0 + 1e-8)
+     {
+      Print("LotsFor skip: min lot risks ", DoubleToString(actualRisk,2),
+            " > 2x budget ", DoubleToString(riskMoney,2), " ", p.name);
+      return(0);
+     }
+   return(lots);
   }
 
 bool CanTradeNow()
@@ -1214,13 +1223,14 @@ int OpenTrade(Pattern *p)
    if(!CanTradeNow()) return(-1);
    if(p.traded && p.ticket>0) return(p.ticket);
    double lots = LotsFor(p);
+   if(lots <= 0.0) return(-1);
    int type = (p.side==1) ? OP_BUY : OP_SELL;
    double price = (p.side==1) ? Ask : Bid;
    double sl=0, tp=0;
    if(InpBrokerStops)
      {
-      sl = p.stop;
-      tp = (InpKeepUntil==HL_KEEP_T1) ? p.t1 : p.t2;
+      sl = NormalizeDouble(p.stop, g_digits);
+      tp = NormalizeDouble((InpKeepUntil==HL_KEEP_T1) ? p.t1 : p.t2, g_digits);
      }
    int ticket = OrderSend(Symbol(), type, lots, price, InpSlippage, sl, tp,
                           p.name, InpMagic, 0, (p.side==1)?clrTeal:clrFireBrick);
