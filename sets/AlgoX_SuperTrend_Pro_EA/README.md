@@ -1,94 +1,99 @@
-# AlgoX SuperTrend Pro EA - M5 / M15 research presets (after the first live round)
+# AlgoX SuperTrend Pro EA - M5 / M15 presets (round 3, after two live rounds)
 
-Ready-made MT4 presets for `src/AlgoX_SuperTrend_Pro_EA.mq4`, rebuilt after four presets wiped
-real accounts. **Read the first section before running anything.**
+Ready-made MT4 presets for `src/AlgoX_SuperTrend_Pro_EA.mq4`. Round 1 was wiped by a sizing error
+and a 0.47 spread on M1; round 2 found the first preset with a real edge. Read the results first.
 
-## What happened in the first round (the honest version)
+## Round 2 results (M5 / M15, 47 spread, 500 USD, 2026.01.01-2026.09.25)
 
-Four presets (C1-C4) were built around a **0.47 USD spread on XAUUSD M1**. They were tested on
-Alpari-Standard3, 500 USD, 2026.01.01-2026.09.25, spread 47, Every tick:
+| Preset | TF | Trades | Net | PF | Win % | Avg win | Avg loss | Break-even win % | Gap | Max DD |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `00_Pine_Baseline` (control) | M15 | 17 | -491.12 | 0.16 | 64.7 | 8.79 | -97.96 | 91.8 | -27.1 | 99.5% |
+| `M15_A_Breakout_Volume` | M15 | 52 | -126.27 | 0.80 | 40.4 | 24.38 | -20.59 | 45.8 | -5.4 | 57.8% |
+| `M15_B_Trend_Runner` | M15 | 118 | -463.29 | 0.60 | 50.0 | 11.96 | -19.81 | 62.4 | -12.4 | 93.3% |
+| `M15_C_NY_Expansion` | M15 | 10 | **+69.75** | **2.26** | 40.0 | 31.30 | -9.24 | 22.8 | **+17.2** | 8.1% |
+| `M5_A_Breakout_Volume` | M5 | 155 | **+84.10** | **1.11** | 40.7 | 13.87 | -8.59 | 38.3 | **+2.4** | 21.6% |
+| `M5_B_Trend_Momentum` | M5 | 876 | -304.36 | 0.92 | 45.7 | 8.65 | -7.91 | 47.8 | -2.1 | 93.8% |
+| `M5_C_NY_Expansion` | M5 | 36 | -47.42 | 0.75 | 33.3 | 12.03 | -7.99 | 39.9 | -6.6 | 13.4% |
 
-| Preset | Trades | Net | PF | Win % | Avg win | Avg loss | Break-even win % needed | Gap |
-|---|---|---|---|---|---|---|---|---|
-| C1 Trend-Momentum | 157 | -473.27 | 0.60 | 31.2 | 14.60 | -11.01 | 42.99 | **-11.78** |
-| C2 Expansion Breakout | 528 | -347.32 | 0.87 | 38.3 | 11.85 | -8.41 | 41.51 | **-3.25** |
-| C3 Cost-Gates Only | 256 | -462.94 | 0.64 | 34.0 | 9.48 | -7.62 | 44.56 | **-10.58** |
-| C4 Session Expansion | 235 | -461.13 | 0.64 | 33.6 | 10.18 | -8.11 | 44.34 | **-10.72** |
+Modelling quality 90% (up from 25% in round 1), so these numbers are comparable.
 
-Three independent causes, none of them "the indicator is bad":
+### What the numbers say
 
-1. **The cost.** On M1 gold the 0.47 spread is 28-50% of the ATR based risk distance. Every preset
-   needed a 41.5-44.6% win rate to break even and delivered 31-38%. Adding the spread back to the
-   results turns them roughly break-even to positive - the raw signal has a small edge, the spread
-   eats all of it.
-2. **A 10x sizing error (the account killer).** The presets used `PINE_FIXED` sizing, which assumes
-   the indicator's manual lot value (10 USD per 1.0 move per lot = a 10 oz contract). The broker
-   trades **100 oz** per lot, so the intended 1.50 USD risk per trade was really ~15 USD, i.e.
-   ~3.2% of a 500 USD account **per trade** - and four presets running side by side multiplied it.
-   The average loss in the reports (-8 to -11 USD) is exactly that number.
-3. **No account level safety.** The EA had no daily loss cap, no trade count cap, no margin cap and
-   no circuit breaker. The only guard was "free margin > 0", which fires when it is already too late.
+1. **The breakout family wins, the trend + momentum family loses.** `M5_A` (structure break + 200-bar
+   extreme + relative volume) is the only preset with a usable sample that clears its break-even win
+   rate (+2.4 points, PF 1.11). `M5_B` and `M15_B` (trend + MACD) both sit below their break-even
+   win rate. This is consistent with the published evidence: momentum indicators alone are weak, the
+   volume/expansion combination is the one that carries information.
+2. **The runner exit destroys the payoff ratio.** `M15_B` wins 50% of its trades but has an average
+   win of 11.96 against an average loss of 19.81 (ratio 0.60) - the trailing stop cuts the winners
+   and leaves the losers full size. The fixed TP2 with the break-even trigger has a ratio of 1.61
+   (`M5_A`). Do not use the trailing exit on this system.
+3. **The session filter is a coin flip.** On M15 it produced the best single result (`M15_C`,
+   PF 2.26) - but on only 10 trades, which is statistically meaningless. On M5 the same filter made
+   things worse (`M5_C` 0.75 vs `M5_A` 1.11). Keep it as a "watch", not as a conclusion.
+4. **`M5_A` is not a free lunch yet.** The same preset made 84 USD in 9 months (17%) with a 21.6%
+   drawdown, and its largest single win (196 USD) is 22% of the gross profit - the result leans on
+   a few trades. It needs an out-of-sample run before it deserves real money.
+5. **The control is a catastrophe, and it exposed a real bug.** The raw signal lost 491 USD with a
+   -511 USD single trade: the fill arrived without a working stop loss and nothing stopped it. That
+   is now impossible (see the new guards below).
 
-## What is different in this set
+## What is different in this set (round 3)
 
-| | First round | This set |
-|---|---|---|
-| Chart timeframe | M1 | **M5 and M15** |
-| Spread share of risk | 28-50% | **~13% (M5), ~9% (M15)** |
-| Sizing | PINE_FIXED (10 oz assumption) | **AX_SIZING_BROKER, 0.5% of real equity** |
-| Margin guard | none | **max 5% of equity per trade** |
-| Daily loss cap | none | **3% of the day start equity, then stop** |
-| Trade count cap | none | **3 entries per day** |
-| Loss streak cap | none | **4 consecutive losses, then stop for the day** |
-| Circuit breaker | none | **-20% equity: close and halt until reload** |
-| Live spread cap | off | **60 points** |
-| Parallel presets per account | up to 4 | **1 - enforced in the README and the generator** |
+| | Round 1 (M1) | Round 2 (M5/M15) | Round 3 (now) |
+|---|---|---|---|
+| Sizing | PINE_FIXED, 10x too much | AX_SIZING_BROKER 0.5% | same |
+| Margin cap / daily loss cap / trade cap | none | yes | yes |
+| Equity stop | none | -20% | -20% |
+| **Max loss per single trade** | **none** | **none** | **2% of the balance, closes the trade** |
+| **Stop loss integrity check** | **none** | **none** | **SL re-attached when the fill has none or a farther one** |
+| Live spread cap | off | 60 points | 60 points |
+
+The two new guards are the direct answer to the `00_Pine_Baseline` report:
+`InpMaxTradeLossPercent=2.0` closes any trade whose floating loss reaches 2% of the balance, and
+`InpForceStopLoss=true` re-attaches the stop at the intended risk distance when the fill arrives
+without one (`SAFETY: stop loss fixed ...` in the journal).
 
 ## The presets
 
-| File | Timeframe | Idea | Hard filters | ATR gate |
-|---|---|---|---|---|
-| `00_Pine_Baseline` | M5/M15 (runs on any) | the raw signal, no cost gates - the control | none | off |
-| `M15_A_Breakout_Volume` | M15 | expansion breakout + volume (the best of round 1) | structure, RVOL, 200-bar | 3.0 USD |
-| `M15_B_Trend_Runner` | M15 | trend + momentum with an ATR trailing runner | H1 trend, MACD | 3.0 USD |
-| `M15_C_NY_Expansion` | M15 | A + New York session only | structure, RVOL, 200-bar, NY | 3.5 USD |
-| `M5_A_Breakout_Volume` | M5 | the same breakout, faster | structure, RVOL, 200-bar | 2.0 USD |
-| `M5_B_Trend_Momentum` | M5 | trend (M30) + MACD | M30 trend, MACD | 2.0 USD |
-| `M5_C_NY_Expansion` | M5 | M5_A in the New York session | structure, RVOL, 200-bar, NY | 2.5 USD |
+| File | TF | Status | Idea | Hard filters | ATR gate |
+|---|---|---|---|---|---|
+| `00_Pine_Baseline` | M15 | control | the raw signal, no cost gates | none | off |
+| `M5_A_Breakout_Volume` | M5 | **candidate** | expansion breakout + volume (PF 1.11) | structure, RVOL, 200-bar | 2.0 |
+| `M15_C_NY_Expansion` | M15 | watch (10 trades) | breakout + NY session (PF 2.26) | structure, RVOL, 200-bar | 3.5 |
+| `M5_C_NY_Expansion` | M5 | watch | M5 breakout in the NY session (PF 0.75) | structure, RVOL, 200-bar, NY | 2.5 |
+| `M15_A_Breakout_Volume` | M15 | reference (PF 0.80) | the M15 breakout, too slow | structure, RVOL, 200-bar | 3.0 |
+| `M5_B_Trend_Momentum` | M5 | rejected (PF 0.92) | trend (M30) + MACD, 876 trades | M30 trend, MACD | 2.0 |
+| `M15_B_Trend_Runner` | M15 | rejected (PF 0.60) | trend + MACD with the ATR trailing runner | H1 trend, MACD | 3.0 |
+
+Statuses come from the round 2 results above. `candidate` = worth an out-of-sample run,
+`watch` = promising but too few trades to judge, `rejected` = the evidence says no,
+`reference` = kept for comparison, `control` = the measuring stick.
 
 All research presets target **TP2 with the stop moved to break-even at the TP1 distance**
 (`AX_EXIT_TP2_BE`); `M15_B` uses the ATR trailing runner instead (`AX_EXIT_TRAIL_AFTER_TP1`,
 2x ATR). No preset uses the TP1-only exit - it cannot pay a 0.47 spread.
 
-## How to test (in this order, one at a time)
+## How to test (round 3 plan, in this order)
 
-**Step 0 - the diagnostic that decides everything.** Run `00_Pine_Baseline` twice on M15 and on M5,
-same period, same symbol:
+**Step 0 - is the `M5_A` edge real?** Two runs, same period as round 2, everything else untouched:
 
-- once with the tester spread at **47** (the real cost),
-- once with the tester spread at **0** (the raw signal).
+1. `M5_A_Breakout_Volume` with the tester spread at **0**. This measures how much of the edge the
+   spread eats. Round 2 was PF 1.11 *with* the 47 point spread; if the zero-spread run is ~1.3-1.4,
+   the edge is genuine and the cost model is doing its job. If both runs are equal, the edge comes
+   from somewhere else than the breakout logic and needs a second look.
+2. `M5_A_Breakout_Volume` on a **different period** (e.g. 2025.01.01-2025.12.31, or as much history
+   as the broker gives). This is the out-of-sample test. A PF above 1.1 on a period it was not
+   designed on is the minimum bar for demo. Below 1.0 it was curve-luck and we stop here.
 
-If the spread-0 run has PF > 1.2 and the spread-47 run does not, the signal exists and the cost is
-the problem - the M5/M15 presets below are the right path. If the spread-0 run is also below PF 1.0,
-**no filter combination will save it on this symbol** and we change the signal (or the symbol),
-not the timeframe.
+**Step 1 - only if step 0 passes:** run `M15_C_NY_Expansion` on the same period and on 2025 to see
+whether the session restricted version holds up (it needs at least 50+ trades before it means
+anything), and compare against `M5_A`.
 
-**Step 1 - the candidates.** Run them one by one, never two on the same account:
+**Step 2 - after a demo month**, not before: micro-tuning of the candidate (`InpTP2Multiplier`,
+`InpCooldownBars`, the ATR gate) - one change at a time, on the out-of-sample period.
 
-1. `M15_A_Breakout_Volume` - the best hypothesis of round 1, now with ~9% cost share.
-2. `M15_B_Trend_Runner` - the trend variant with the runner exit.
-3. `M5_A_Breakout_Volume` - double the trades, ~13% cost share.
-4. `M15_C_NY_Expansion` / `M5_C_NY_Expansion` - the session limited versions.
-
-Acceptance criteria before any real money: **PF > 1.2, at least 100 trades, and a drawdown you can
-survive on the smallest account you own.** Run it in the Strategy Tester and on a **demo** account
-for at least a month afterwards.
-
-**Step 2 - the tester settings that make the numbers comparable.** Symbol XAUUSD, period M15 or M5,
-model **Every tick**, and download the M1 history first: the first reports show a
-**modelling quality of 25%**, which means the tester was filling gaps in the tick data - the
-absolute numbers of that run are not trustworthy. In Alpari: `Tools -> History Center -> XAUUSD ->
-download M1`, then rerun. Spread: 47 for the comparison, 0 only for the diagnostic.
+Do not run the `rejected` presets again on real money. They are kept in the folder for the record.
 
 ## Account safety layer (new inputs, all adjustable)
 
@@ -102,6 +107,8 @@ download M1`, then rerun. Spread: 47 for the comparison, 0 only for the diagnost
 | `InpMaxConsecutiveLosses` | 4 | stop for the day after N losing trades in a row |
 | `InpEquityStopPercent` | 20.0 | close and halt trading until the EA is reloaded |
 | `InpCloseOnEquityStop` | true | the position is closed when the circuit breaker fires |
+| `InpMaxTradeLossPercent` | 2.0 | close a trade whose floating loss reaches 2% of the balance |
+| `InpForceStopLoss` | true | re-attach the SL when the fill has none (or a farther one) |
 
 The EA also prints, at startup, the broker's real contract value
 (`1.0 price move per lot = X account currency`), the margin per lot and the risk percent in use -

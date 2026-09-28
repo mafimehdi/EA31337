@@ -205,6 +205,8 @@ input double             InpMaxDailyLossPercent  = 0.0;   // [SAFETY] Stop for t
 input int                InpMaxConsecutiveLosses = 0;     // [SAFETY] Stop for the day after N losing trades in a row (0 = off)
 input double             InpEquityStopPercent    = 0.0;   // [SAFETY] Close and halt trading after this equity drop % (needs a reload to reset, 0 = off)
 input bool               InpCloseOnEquityStop    = true;  // [SAFETY] Close the open position when the equity stop fires
+input double             InpMaxTradeLossPercent  = 2.0;   // [SAFETY] Close a trade when its floating loss reaches this % of the balance (0 = off)
+input bool               InpForceStopLoss        = true;  // [SAFETY] Attach a stop loss when the fill arrives without one (or farther than the risk distance)
 
 //--- Score engine -----------------------------------------------------
 input double             InpWeightFib           = 10;        // [RESEARCH] Score weight: Fibonacci (Pine used 25)
@@ -1675,6 +1677,45 @@ void ManageOpenPosition()
 
    if(g_ticket <= 0) return;
    if(!OrderSelect(g_ticket, SELECT_BY_TICKET)) { OnTradeClosed(); return; }
+
+   //--- safety: a single trade may never cost more than a fixed part of the
+   //--- account, whatever the signal, the anchor or the broker did ----------
+   if(InpUseSafetyLimits)
+   {
+      double pnl     = OrderProfit() + OrderSwap() + OrderCommission();
+      double balance = AccountBalance();
+      if(InpMaxTradeLossPercent > 0.0 && balance > 0.0 &&
+         pnl <= -balance * InpMaxTradeLossPercent / 100.0)
+      {
+         LogMsg("SAFETY: floating loss " + DoubleToString(pnl, 2) + " reached " +
+                DoubleToString(InpMaxTradeLossPercent, 1) + "% of the balance - closing #" +
+                IntegerToString(g_ticket));
+         ClosePosition(g_ticket, OrderLots());
+         OnTradeClosed();
+         return;
+      }
+
+      //--- the fill must carry a stop loss in the intended distance ---------
+      if(InpForceStopLoss && g_riskDist > 0.0)
+      {
+         double want   = (g_tradeDir > 0) ? OrderOpenPrice() - g_riskDist
+                                          : OrderOpenPrice() + g_riskDist;
+         want          = NormalizeDouble(want, Digits);
+         double have   = OrderStopLoss();
+         bool   tooFar = (have == 0.0) ||
+                         (g_tradeDir > 0 && have < want) ||
+                         (g_tradeDir < 0 && have > want);
+         if(tooFar)
+         {
+            if(OrderModify(g_ticket, OrderOpenPrice(), want, OrderTakeProfit(), 0, clrRed))
+               LogMsg("SAFETY: stop loss fixed at " + DoubleToString(want, Digits) +
+                      " (risk distance " + DoubleToString(g_riskDist, Digits) + ")");
+            else
+               LogMsg("SAFETY: could not fix the stop loss, error " + IntegerToString(GetLastError()) +
+                      " (broker stops level?)");
+         }
+      }
+   }
    if(OrderCloseTime() != 0 || (OrderType() != OP_BUY && OrderType() != OP_SELL))
    {
       OnTradeClosed();
