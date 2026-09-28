@@ -216,6 +216,45 @@ These are the traps the coherence rules exist for:
 5. Keep the combinations that improve the profit factor or the drawdown - not the ones with the
    prettiest equity curve on a single week.
 
+## Which timeframe?
+
+Everything in this EA is bar based and the SL/TP distance is built from ATR multiples, so the mechanics
+work on any timeframe and scale automatically. The timeframe choice changes three things: **how much of
+the risk the spread eats**, **how noisy ADX and the structure detection are**, and **how many signals
+you get**.
+
+| Goal | Symbol | Chart TF | Trend filter TF | Presets |
+|---|---|---|---|---|
+| Original behaviour (gold scalping) | XAUUSD | M1 | M15 | 00, 04, 05, 09 |
+| Balance - recommended starting point | XAUUSD, indices, FX | M5 | M30 or H1 | 00, 01, 02, 11 |
+| Fewer, steadier trades | same | M15 | H1 | 01, 03, 06, 10 |
+| Session based | same | M5-M15 | H1 | 03, 05, 09 |
+| Semi-swing | same | H1 | H4 | 07, 10 |
+
+- **M1**: on gold ATR(5) is roughly 0.5-1.5 USD, so the risk distance is 1-2.5 USD while the spread is
+  0.2-0.4 USD - that is **10-30% of the risk paid as cost**. ADX(14) is noisy on M1 and the 10/10 pivot
+  only sees a 20 minute structure. Use it only with a raw-spread (ECN) account and fast execution.
+- **M5 (recommended)**: the same structure, ATR two to four times larger, spread share down to 5-10%,
+  and ADX plus the structure detection become meaningful.
+- **M15/M30**: structure breaks and the 233-bar Fibonacci levels (about 2.5 days on M15) turn into real
+  support/resistance; the quality presets (06, 07) and the runner preset (10) behave best here.
+- **H1 and above**: signal count drops sharply. The cooldown counts bars (10 H1 bars = 10 hours), so
+  lower it to 2-3, move the trend filter to H4/D1 and expect overnight trades.
+
+Always remember:
+
+1. `InpTrendTF` must be **higher than the chart timeframe**. The default H1 fits M1-M30 charts; on an H1
+   chart use H4 or D1.
+2. The cooldown is in bars: M1 -> 10 (default), M5 -> 5-10, M15 -> 3-5, H1 -> 2-3.
+3. The session presets (03 London, 05 New York, 09 Asia) are meant for M1-M15; on higher timeframes there
+   are too few bars inside a session and the filter simply stops trading.
+4. In the MT4 strategy tester always use **Every tick** with good M1 history - the EA manages the position
+   on every tick, so `Open prices only` gives wrong results.
+5. Every timeframe needs its own tuning: the thresholds (relative volume 1.2x, slope 0.12-0.2%, strong
+   score 85, spread caps) mean different things on different timeframes. Do not transfer M5 settings to M1.
+6. Running one preset on several timeframes is fine (each preset has its own magic number), but never run
+   the same preset twice on the same symbol and timeframe.
+
 ## Notes and caveats
 
 - The presets are **starting points, not optimised settings**. The thresholds (volume 1.2x, slope
