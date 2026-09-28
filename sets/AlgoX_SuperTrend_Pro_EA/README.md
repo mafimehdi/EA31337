@@ -1,8 +1,13 @@
-# AlgoX SuperTrend Pro EA - combined filter presets
+# AlgoX SuperTrend Pro EA - research presets (XAUUSD M1, 0.47 USD spread)
 
-Ready-made MT4 input presets for `src/AlgoX_SuperTrend_Pro_EA.mq4`.
-Each preset is a **combination of filters that belong together**: they measure different things,
-support the same market hypothesis and none of them cancels the other ones out.
+Ready-made MT4 presets for `src/AlgoX_SuperTrend_Pro_EA.mq4`, rebuilt around one target:
+
+> **Symbol XAUUSD, chart timeframe M1, fixed spread 47 points (0.47 USD).**
+> Which filter combination survives those costs?
+
+The old "one idea per preset" set is replaced by **4 research presets + 1 reference baseline**.
+The full evidence (22 indicator blocks, per-block research, synergy map, cost model and the
+derivation of every threshold) is in `docs/AlgoX_M1_Filter_Research_fa.md`.
 
 ## How to use
 
@@ -11,14 +16,14 @@ support the same market hypothesis and none of them cancels the other ones out.
 3. Press **Load**, choose the preset, then **OK**.
 4. Strategy Tester: `Strategy Tester -> Expert properties -> Inputs -> Load`.
 
-Each file contains all 96 inputs, so loading it fully replaces the previous settings
-(including the magic number, which is unique per preset - several presets can run side by side).
+Each file contains every input of the EA, so loading it fully replaces the previous settings
+(the magic number is unique per preset, so several presets can run side by side).
 
 ## Prebuilt archives (download)
 
 Two ready-to-download archives are kept in `archive/`:
 
-- `AlgoX_SuperTrend_Pro_EA_complete.zip` - EA source, all 12 presets, this README, the generator
+- `AlgoX_SuperTrend_Pro_EA_complete.zip` - EA source, all presets, this README, the generator
   script and the Persian guide.
 - `AlgoX_Set_Files_Only.zip` - only the `.set` files, flat, ready to be copied into `MQL4/Presets`.
 
@@ -29,243 +34,158 @@ Download (branch `arena/01a0e88e-ea31337`):
 - set files only:
   `https://github.com/mafimehdi/EA31337/raw/arena/01a0e88e-ea31337/sets/AlgoX_SuperTrend_Pro_EA/archive/AlgoX_Set_Files_Only.zip`
 
-## Filter families
+## Why the presets look like this (short version of the research)
 
-The filters of the EA are grouped by what they actually measure. This is the base of every
-combination below: **different families reinforce each other, the same family repeated only adds
-selectivity**.
+With a 0.47 USD spread on gold M1 the arithmetic is unforgiving:
 
-| Family | Inputs | What it measures |
+| Regime (ADX) | R:R of the original indicator | Zero-cost break-even win rate | Break-even win rate with 0.47 spread |
+|---|---|---|---|
+| weak (<20) | 0.65 | 60.6% | above 70% - not tradable |
+| medium (20-40) | 0.75 | 57.1% | above 70% - not tradable |
+| strong (>=40) | 1.50 | 40.0% | ~48-55% depending on the ATR |
+
+Exit choice for a strong regime (spread included in the target):
+
+| Exit | TP size | Break-even win rate |
 |---|---|---|
-| Trend / direction | `InpTrendFilterMode` (HTF EMA), `InpSTUse` (SuperTrend),
-`InpRegimeMode` (EMA 5/10/20), `InpStructMode` (BOS/CHoCH) | where the price is heading
-on a higher scale |
-| Momentum | `InpMACDMode`, `InpRSIMode` (55/45) | how strong the current push is |
-| Participation | `InpVolAvgMode`, `InpVolFilterMode` (relative volume) | whether real volume is behind the move |
-| Location / value | `InpVWAPMode`, `InpExtraFibMode` (50% / 78.6%), `InpRange200Mode` |
-whether the entry price is a good place to enter |
-| Market condition | `InpUseAntiWhipsaw`, `InpUseSlopeFilter` | whether the market is tradable at all (chop, flat) |
-| Trading window | `InpUseSessionFilter`, `InpMaxSpreadPoints` | when trading is allowed |
-| Signal quality gate | `InpStrongMode` | how high the score must be |
-| Execution | `InpEntryMode`, `InpPendingExpiryBars`, `InpSLAnchor`, `InpExitMode`,
-trailing, sizing | how the trade is placed and closed |
+| TP1 only | 0.8 x ATR | 54.7% |
+| TP1 only | 1.0 x ATR | 51.8% |
+| **TP2 (1.5 x TP1)** | **1.2 x ATR** | **42.1%** |
+| **TP2** | **1.5 x ATR** | **39.8%** |
 
-## Coherence rules (enforced by `generate_presets.py`)
+Two conclusions drive everything:
 
-1. **At most 2 hard filters per family.** A third trend filter does not add information, it only
-   removes trades. The third one is kept as a score bonus (`AX_MODE_SCORE`).
-2. **At most 5 hard filters in total**, and with `AX_STRONG_ONLY` at most 4 (plus the strong gate).
-   Beyond that the preset stops producing trades at all.
-3. **A breakout entry never runs with the anti-whipsaw filter.** Breakouts happen when volatility
-   expands, the anti-whipsaw penalty plus the longer cooldown would suppress exactly that move.
-4. **A pullback (limit) entry never runs with `AX_STRUCT_REQUIRE_FRESH`.** By the time the price
-   pulls back to the entry level, the structure break is no longer fresh.
-5. **A limit entry never has the market fallback enabled**, otherwise the pullback preset silently
-   turns into a market-entry preset.
-6. **One idea per preset**: either the trade follows a trend, or breaks out of a range, or buys
-   value in a balance, or defends capital. Mixing two of those ideas produces the worst of both.
-7. Hard filters should live in **different families** where possible, so every filter adds a new
-   piece of information instead of repeating the previous one.
+1. **The small TP1 cannot pay the spread.** The trade must target TP2 / the runner, and the stop
+   must still be wide enough not to be noise (ATR based stops below 1 x ATR are hit by noise in
+   more than 65% of the cases within three bars).
+2. **The score engine had its weight in the wrong place.** 55% of the score sat on Fibonacci
+   (25) and the pivot structure break (30) - the two blocks with the weakest evidence - while the
+   blocks with the strongest published evidence (MACD, volume) were off by default. The presets
+   therefore use rebalanced weights: fib 10, structure 10, EMA 20, RSI 20, MACD 20, volume 20.
 
-`generate_presets.py` refuses to write a preset that breaks these rules, so the presets in this
-folder are guaranteed to be internally consistent.
+Cost gates added to the EA for exactly this purpose (all inputs, all adjustable):
+`InpUseCostFilters`, `InpFixedSpreadPoints=47`, `InpMinATR=1.0`, `InpMinADXRegime`,
+`InpMinSLSpreadMult=2.0`, `InpMinTargetSpreadMult=3.0`, `InpSkipTP1IfUneconomic`.
 
 ## The presets
 
-| # | File | Idea | Hard filters (family) | Expectation |
+| # | File | Idea | Hard filters | Weights |
 |---|---|---|---|---|
-| 00 | `00_Pine_Baseline` | the indicator itself | none | reference curve, most trades |
-| 01 | `01_Trend_Pullback_Confluence` | trend + pullback location | trend 2, location 1, condition 2 | medium |
-| 01 | `01_Trend_Pullback_Confluence` | trend + pullback location | trend 2, location 1,
-condition 2 | medium |
-| 03 | `03_London_Trend_Session` | London trend continuation | trend 2, condition 1, window 2 | medium |
-| 04 | `04_Breakout_Expansion` | breakout + expansion | trend 1, momentum 1, volume 1, location 2 | low |
-| 05 | `05_NY_Breakout_Momentum` | New York breakout | momentum 1, volume 1, window 2 | low-medium |
-| 06 | `06_Confluence_Max_Quality` | everything confirmed | quality 1, trend 2, momentum 1, volume 1 | lowest |
-| 07 | `07_Defensive_Low_Risk` | capital protection | quality 1, condition 2, window 1 | low |
-| 08 | `08_Value_VWAP_Balance` | value entries, no trend mandate | location 2 | medium |
-| 09 | `09_Asia_Range_Value` | Asian range value | location 2, window 2 | medium |
-| 10 | `10_Trend_Rider_Trailing` | trend rider with a runner | trend 2, condition 1 | medium |
-| 11 | `11_AllWeather_Score_Based` | one score, no blockers | condition 1 | high (close to baseline) |
+| 00 | `00_Pine_Baseline` | the indicator itself, no cost gates | none | Pine (25/20/25/30) |
+| C1 | `C1_Trend_Momentum` | trend + momentum + volume | M15 trend, MACD | research (10/20/20/10/20/20) |
+| C2 | `C2_Expansion_Breakout` | expansion breakout | fresh structure, 200-bar extreme, RVOL | research + MACD |
+| C3 | `C3_CostGates_Only` | control: old score engine + cost gates | none (cost gates only) | Pine |
+| C4 | `C4_Session_Expansion` | New York session expansion | M15 trend, MACD, NY session | research |
 
-Common base of every preset, so that only the filter combination differs:
-`InpSizingMode=AX_SIZING_PINE_FIXED`, `InpPineBalance=100`, `InpRiskPercent=1.5`,
-`InpPineLotValue=10`, `InpEntryMode=AX_ENTRY_MARKET` (except 01, 08, 09 limit and 04, 05 stop),
-`InpSLAnchor=AX_ANCHOR_RECENTER`, `InpExitMode=AX_EXIT_SPLIT_BE`, `InpTP1Portion=0.5`,
-`InpMoveToBEAtTP1=true` (exceptions are named below).
-**Switch `InpSizingMode` to `AX_SIZING_BROKER` (value 0) on a live account.**
+**The comparison is the product.** 00 versus C3 measures how much the geometry alone is worth;
+C3 versus C1 measures how much the documented filter combination adds on top of that geometry.
 
-## What each combination does
+### Common base of every preset
 
-### 00 - Pine Baseline (reference)
+Identical in all files, so that a difference between two presets is a difference of filters:
 
-No filter, original thresholds (85/55), cooldown 10, original reference SL/TP
-(`InpSLAnchor=AX_ANCHOR_REFERENCE`) and the original exit (whole position at TP1). The curve every
-other preset is compared against, and the check that the EA reproduces the TradingView indicator.
+- Sizing: `AX_SIZING_PINE_FIXED`, balance 100, risk 1.5%, lot value 10 USD per 1.0 move.
+  **Switch to `AX_SIZING_BROKER` (value 0) or `AX_SIZING_RISK_PERCENT` on a live account.**
+- Entry: `AX_ENTRY_MARKET` (same entry method everywhere -> the comparison is fair).
+- `InpSLAnchor=AX_ANCHOR_RECENTER`, `InpKeepTP2OnOrder=true`.
+- Cooldown 10 bars (5-12 in individual presets, always stated in the file header).
+- Cost gates as listed above; score weights as listed above (except where a row says otherwise).
 
-### 01 - Trend + pullback location
+### 00 - Pine Baseline (reference, do not trade it)
 
-Trend family: higher timeframe EMA (H1, EMA 50) **required**, structure bias as a filter, the
-SuperTrend only adds score (a third trend vote would just delete trades).
-Location family: the VWAP is **required** and the entry waits for a pullback - a limit order at the
-30% level of the signal candle, valid three bars, with no market fallback.
-Condition family: consolidation penalty (score x0.85, cooldown x1.25) and a slope requirement of
-0.12%.
+Original score weights, no MACD, no volume scoring, original reference SL/TP, the original TP1
+exit, `InpUseCostFilters=false`. It exists to answer one question: *what does the raw indicator
+do under real costs?* The cost model says the answer is "lose slowly"; that number is the
+starting point of the whole comparison.
 
-### 02 - Trend + momentum + volume expansion
+### C1 - Trend + momentum (the documented combination)
 
-Two independent trend measurements are required (higher timeframe EMA + SuperTrend), the EMA
-regime adds score instead of a third requirement. Momentum is confirmed by the MACD histogram
-(required) while the 55/45 RSI levels and the slope stay on score. Participation: relative volume
-above 1.2x is required. Re-entries in the direction that just traded are suppressed.
+The MACD alone has a win rate below 50% in the published tests; MACD combined with RSI reaches
+0.84-0.86, and MACD combined with an ADX regime filter beats both the EMA crossover and buy and
+hold in the Bitcoin study. C1 encodes exactly that:
 
-### 03 - London session trend continuation
+- **Hard**: higher timeframe trend (M15 EMA 50) must agree, MACD histogram must agree.
+- **Score**: 55/45 RSI levels, market regime (EMA 5/10/20), volume average.
+- **Cost gates**: ATR(5) >= 1.0 USD, ADX in the strong regime, SL >= 2x spread, TP2 >= 3x spread.
+- **Exit**: whole position at TP2, stop moved to break-even at the TP1 distance
+  (`AX_EXIT_TP2_BE`), which is the only exit geometry the cost model leaves positive.
 
-Trading window: London only (UTC 09:01-16:00) with a 50 point spread cap - the session where trends
-usually develop. Trend requirement is limited to the higher timeframe EMA and the SuperTrend, the
-market condition is guarded by the slope filter, and MACD, 55/45 RSI levels, relative volume and
-the SuperTrend bonus are all on score. That keeps the signal count usable *inside* the session.
+### C2 - Expansion breakout
 
-### 04 - Breakout expansion
+Breakouts need expansion, so this preset requires it instead of penalising it (anti-whipsaw and
+slope stay off):
 
-Trend family: a fresh BOS/CHoCH structure break is required (not a bias filter, the break must be
-recent). Location: a close at the 200-bar extreme and beyond the 78.6% Fibonacci level. Momentum:
-MACD agreement. Participation: relative volume above 1.2x. Execution: a **stop order just beyond
-the signal candle extreme** (`InpEntryPercent=90`), valid two bars, no market fallback - when the
-price already ran away the signal is skipped instead of chased. Anti-whipsaw and slope are off on
-purpose (they would suppress the expansion), and only one signal per move is allowed.
+- **Hard**: fresh BOS/CHoCH structure break, close at the 200-bar extreme, relative volume >= 1.2x.
+- **Score**: MACD, RSI, EMA, EMA regime, the rebalanced weights.
+- **Exit**: TP2 + break-even trigger, cooldown 5 bars because the structure break itself is the
+  timing device.
 
-### 05 - New York session breakout momentum
+### C3 - Cost gates only (the control)
 
-Same breakout idea adapted to the New York session (16:01-21:59 UTC, spread cap 60 points) with
-softer gates: volume above its 20-bar average and MACD are hard, the 200-bar extremes, SuperTrend
-and relative volume add score. Stop entry beyond the signal candle, no fallback.
+The old score engine (fib 25 / structure 30 / EMA 25 / RSI 20), no extra indicator block, but
+with the cost gates and the TP2 + break-even exit. This is the cleanest experiment in the set:
+*what happens if we change nothing about the filters and only stop paying for trades that cannot
+pay for themselves?*
 
-### 06 - Maximum confluence
+### C4 - Session expansion (New York)
 
-Quality gate: only scores at or above 85. Direction: higher timeframe trend required and the
-structure bias must agree. Confirmation: MACD histogram and volume above its average are required;
-the relative volume bonus, the EMA regime and the 55/45 RSI levels add score. One signal per move,
-and the same direction is traded at most once per day. This is the deliberate "four hard filters
-plus the strong gate" limit - going further stops trading.
+C1 restricted to the New York session (16:01-21:59 UTC, broker offset 3h) with a stricter ATR
+gate (1.2 USD) and a 5 bar cooldown. Rationale: the spread is a fixed cost, so it should only be
+paid in the window where the range actually expands - the session filter is a cost filter in
+disguise, not a "trade only in London" superstition.
 
-### 07 - Defensive low risk
+## Coherence rules (enforced by `generate_presets.py`)
 
-Quality gate: score >= 85 only. Condition: consolidation (Bollinger width below the 25th
-percentile) penalises score by 0.8 and multiplies the cooldown by 1.5, the slope must be at least
-0.2%. Window: spread capped at 40 points. Execution: cooldown 20 bars, one signal per move, **risk
-halved to 0.75%** and the position is closed completely at TP1 - no runner and no open risk in
-quiet markets.
+1. **At most 2 hard filters per family** and **at most 5 hard filters in total.**
+2. A breakout preset never runs the anti-whipsaw penalty or the slope filter.
+3. A limit entry never runs `AX_STRUCT_REQUIRE_FRESH` and never has the market fallback enabled.
+4. One idea per preset - trend, breakout, cost control or session - never two.
+5. Every preset with the cost gates on must assume the 47 point spread, `InpMinATR >= 1.0`,
+   `InpMinSLSpreadMult >= 2.0`, `InpMinTargetSpreadMult >= 3.0` and
+   `InpSkipTP1IfUneconomic=true`.
+6. The reference preset must keep the Pine weights, the TP1-only exit and the cost gates off.
+7. `AX_EXIT_TP1_ONLY` is rejected outside the reference preset, because the cost model shows it
+   cannot pay a 0.47 USD spread.
+8. Research presets may not keep more than 15 points of weight on Fibonacci or on structure.
 
-### 08 - Value entries (VWAP + Fibonacci)
+`generate_presets.py` refuses to write a preset that breaks a rule, so everything in this folder
+is internally consistent. Run `python3 generate_presets.py` after changing EA inputs.
 
-Two-way preset with no trend mandate: the location family carries it. A close beyond both the 50%
-and the 78.6% Fibonacci levels and on the right side of the VWAP are required, the entry is a
-**limit** order at the 30% level of the signal candle (three bars, no fallback). The higher
-timeframe trend only adds a bonus, volume adds score, and the anti-whipsaw penalty is off because
-this combo accepts ranging conditions.
+## How to compare the presets (the part that actually decides)
 
-### 09 - Asian session range value
+1. Same symbol, same period, **Every tick** with real M1 history, spread fixed at 47 points.
+2. Run 00 first, then C3, then C1, C2, C4 - in that order, so every step has a clean control.
+3. Judge with: trade count, profit factor, break-even win rate (as in the tables above), max
+   drawdown, and the **average win / average loss** ratio. Ignore the shape of the curve on one week.
+4. If a preset produces fewer than ~30 trades on the test period, the result is noise - extend
+   the period before drawing conclusions.
+5. Swap one thing at a time afterwards: the entry mode (`STOP` for C2), the exit multiplier
+   `InpTP2Multiplier` (1.5 -> 2.0), or the ATR gate. The presets are starting points, not a
+   finished optimisation.
 
-Trading window: Asia (00:00-09:00 and 22:00-24:00 UTC, spread cap 50 points). Location: VWAP and
-both extra Fibonacci levels are required, the entry is a limit order valid four bars (no fallback).
-The 55/45 RSI levels and volume add score, there is no trend requirement, and the whole position is
-closed at TP1 - a range target, not a runner.
+## What is deliberately NOT in the presets
 
-### 10 - Trend rider with a trailing runner
-
-Direction: higher timeframe trend required and the structure bias must agree, with the SuperTrend,
-MACD, regime, volume and slope on score. Exit: part at TP1, stop to break-even and then an **ATR
-trailing stop** (2x ATR) for the rest, so the runner is not cut by a fixed target. Strong signals
-(score >= 85) get 1.5x the normal risk, because a runner needs room to work.
-
-### 11 - All-weather score based
-
-One unified score with no hard blockers: the higher timeframe trend adds a bonus, the SuperTrend,
-MACD, 55/45 RSI levels, relative volume, 200-bar extremes and the market regime add score
-(`InpExtraWeight=10`), and only the consolidation penalty (score x0.9, cooldown x1.2) protects
-against choppy conditions. The trade count stays close to the baseline, the quality is filtered by
-the score itself. Use it when you dislike filter stacking but still want the extra information.
-
-## Combinations to avoid (and why)
-
-These are the traps the coherence rules exist for:
-
-- **Stop entry + anti-whipsaw**: the breakout happens exactly when volatility expands; the penalty
-  and the longer cooldown suppress that move.
-- **Limit entry + `AX_STRUCT_REQUIRE_FRESH`**: waiting for a pullback while demanding a fresh break.
-- **Limit entry + market fallback**: the pullback preset quietly becomes a market preset, with a
-  worse entry than the signal candle.
-- **Trend required + regime required + MACD required + RSI required**: four votes for the same
-  question (direction), each one deletes trades without adding information.
-- **`AX_STRONG_ONLY` + five hard filters**: multiplicative selectivity, practically no trades left.
-- **`AX_EXIT_TP2_ONLY` with the weak-ADX regime**: TP2 is 1.5x TP1 while the R:R of that regime is
-  only 0.65 - the target is unrealistic, use the split exit or a runner instead.
-- **Anti-whipsaw in a range/value preset**: the penalty fights the very conditions the preset trades.
-- **Fixed lot together with a risk percent preset**: inconsistent risk between presets, the
-  comparison between them becomes meaningless.
-
-## Suggested workflow
-
-1. `00` first: confirm that the EA reproduces the indicator (trade count, curve shape).
-2. `11` next: the "soft" combination - it shows how much the score engine alone already filters.
-3. Then the directional combos in this order: `01`, `02`, `03`, `10` and the breakout ones
-   `04`, `05`. Compare each with `00` on the **same period and symbol**.
-4. `06` and `07` are the low-frequency variants; `08` and `09` the value variants for ranging
-   sessions.
-5. Keep the combinations that improve the profit factor or the drawdown - not the ones with the
-   prettiest equity curve on a single week.
-
-## Which timeframe?
-
-Everything in this EA is bar based and the SL/TP distance is built from ATR multiples, so the mechanics
-work on any timeframe and scale automatically. The timeframe choice changes three things: **how much of
-the risk the spread eats**, **how noisy ADX and the structure detection are**, and **how many signals
-you get**.
-
-| Goal | Symbol | Chart TF | Trend filter TF | Presets |
-|---|---|---|---|---|
-| Original behaviour (gold scalping) | XAUUSD | M1 | M15 | 00, 04, 05, 09 |
-| Balance - recommended starting point | XAUUSD, indices, FX | M5 | M30 or H1 | 00, 01, 02, 11 |
-| Fewer, steadier trades | same | M15 | H1 | 01, 03, 06, 10 |
-| Session based | same | M5-M15 | H1 | 03, 05, 09 |
-| Semi-swing | same | H1 | H4 | 07, 10 |
-
-- **M1**: on gold ATR(5) is roughly 0.5-1.5 USD, so the risk distance is 1-2.5 USD while the spread is
-  0.2-0.4 USD - that is **10-30% of the risk paid as cost**. ADX(14) is noisy on M1 and the 10/10 pivot
-  only sees a 20 minute structure. Use it only with a raw-spread (ECN) account and fast execution.
-- **M5 (recommended)**: the same structure, ATR two to four times larger, spread share down to 5-10%,
-  and ADX plus the structure detection become meaningful.
-- **M15/M30**: structure breaks and the 233-bar Fibonacci levels (about 2.5 days on M15) turn into real
-  support/resistance; the quality presets (06, 07) and the runner preset (10) behave best here.
-- **H1 and above**: signal count drops sharply. The cooldown counts bars (10 H1 bars = 10 hours), so
-  lower it to 2-3, move the trend filter to H4/D1 and expect overnight trades.
-
-Always remember:
-
-1. `InpTrendTF` must be **higher than the chart timeframe**. The default H1 fits M1-M30 charts; on an H1
-   chart use H4 or D1.
-2. The cooldown is in bars: M1 -> 10 (default), M5 -> 5-10, M15 -> 3-5, H1 -> 2-3.
-3. The session presets (03 London, 05 New York, 09 Asia) are meant for M1-M15; on higher timeframes there
-   are too few bars inside a session and the filter simply stops trading.
-4. In the MT4 strategy tester always use **Every tick** with good M1 history - the EA manages the position
-   on every tick, so `Open prices only` gives wrong results.
-5. Every timeframe needs its own tuning: the thresholds (relative volume 1.2x, slope 0.12-0.2%, strong
-   score 85, spread caps) mean different things on different timeframes. Do not transfer M5 settings to M1.
-6. Running one preset on several timeframes is fine (each preset has its own magic number), but never run
-   the same preset twice on the same symbol and timeframe.
+- Fibonacci levels and VWAP as **standalone** rules. The Fibonacci study (three markets) found the
+  bounce probability on Fib zones statistically indistinguishable from non-Fib zones, and the
+  VWAP evidence is institutional/industry level only. Both stay in the EA as adjustable inputs and
+  are usable as score components, but no preset requires them.
+- The fixed spread cap `InpMaxSpreadPoints` is left at 0 in the research presets, because the cost
+  gates work with the fixed 47 point assumption instead. Set a cap on a live account if the broker
+  widens the spread.
+- Anything based on visual or display logic - out of scope by request.
 
 ## Notes and caveats
 
-- The presets are **starting points, not optimised settings**. The thresholds (volume 1.2x, slope
-  0.12-0.2%, strong score 85, spread 40-60 points) are reasonable defaults, not universal truths;
-  symbols and brokers differ. Tune them per instrument.
-- The session presets use a fixed broker offset (`InpBrokerGMTOffsetHrs=3`, usually 2 or 3).
-  A fixed offset does not follow daylight saving time; when trading live you can set
-  `InpUseManualGMTOffset=false` to use `TimeGMT()` instead.
-- Presets `01`, `08`, `09` (limit) and `04`, `05` (stop) need a broker with a small `StopsLevel`,
-  otherwise the pending order is rejected and - with the fallback disabled - the signal is skipped.
-- Every preset keeps the indicator's SL/TP logic (ADX driven multipliers, ATR based distance) and
-  the score engine untouched, so a comparison between the presets is a comparison of filters only.
-- Regenerate the files after changing the EA inputs: `python3 generate_presets.py`
-  (it parses the `input` declarations from the `.mq4` source and validates the coherence rules).
+- The presets are **starting points, not optimised settings**, and the cost model uses
+  equilibrium arithmetic (break-even win rates), not a backtest on your broker's history. The
+  strategy tester on your own data is the final judge.
+- `InpFixedSpreadPoints=47` is the *assumed* spread for the gates. Live orders still execute at the
+  broker spread; set `InpFixedSpreadPoints=0` to let the gates use the live spread instead.
+- `AX_EXIT_TP2_BE` moves the stop to the break-even price (`InpBEPlusPoints` above the entry) once
+  the TP1 distance is reached, so the whole position runs to TP2. If you prefer a partial close,
+  use `AX_EXIT_SPLIT_BE` - but note that its TP1 leg is exactly what the cost model calls
+  unprofitable.
+- Presets use a fixed broker offset (`InpBrokerGMTOffsetHrs=3`) for the session filter; a fixed
+  offset does not follow daylight saving time. Set `InpUseManualGMTOffset=false` to use `TimeGMT()`.
+- No MetaTrader compiler exists in the repository environment, so the EA is shipped as source:
+  compile it once in MetaEditor (F7) and check the Experts log.

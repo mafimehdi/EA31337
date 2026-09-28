@@ -19,6 +19,9 @@ repos:
     rev: v0.31.1
     hooks:
       - id: markdownlint
+        # The Persian documents are RTL prose; the ASCII oriented markdown rules
+        # (line length, list spacing) do not apply to them.
+        exclude: _fa\.md$
 
   - repo: https://github.com/jumanjihouse/pre-commit-hooks
     rev: 2.1.6
@@ -30,7 +33,7 @@ repos:
       # @fixme: https://github.com/jumanjihouse/pre-commit-hooks/issues/79
       # - id: markdownlint  # Configure in .mdlrc
       - id: require-ascii
-        exclude: \.zip$
+        exclude: (\.zip|_fa\.md)$
       - id: script-must-have-extension
       # - id: shellcheck
       - id: shfmt

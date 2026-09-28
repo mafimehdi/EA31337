@@ -159,21 +159,21 @@ def hard_filters(preset):
 
 
 def validate_coherence(preset, inputs):
-    """Raise ValueError when a preset mixes filters that fight each other."""
+    """Raise ValueError when a preset breaks the research / coherence rules."""
     values = dict(BASE)
     values.update(preset["overrides"])
     problems = []
+    is_reference = (preset.get("family") == "reference")
+    pine_weights = (preset.get("weights") == "pine")
 
+    # --- general coherence: no filter family measured twice ---------------
     hard = hard_filters(preset)
     per_family = {}
     for family, label in hard:
         per_family.setdefault(family, []).append(label)
-
     for family, labels in sorted(per_family.items()):
         if len(labels) > MAX_HARD_PER_FAMILY:
-            problems.append(
-                "more than %d hard %s filters: %s" % (MAX_HARD_PER_FAMILY, family, labels)
-            )
+            problems.append("more than %d hard %s filters: %s" % (MAX_HARD_PER_FAMILY, family, labels))
     if len(hard) > MAX_HARD_TOTAL:
         problems.append("more than %d hard filters in total: %d" % (MAX_HARD_TOTAL, len(hard)))
 
@@ -183,32 +183,59 @@ def validate_coherence(preset, inputs):
     exit_mode = values.get("InpExitMode", "AX_EXIT_SPLIT_BE")
     strong = values.get("InpStrongMode", "AX_STRONG_OFF")
 
-    # A breakout entry cannot live together with an anti-whipsaw penalty:
-    # breakouts happen exactly when volatility expands and the cooldown doubles.
     if entry == "AX_ENTRY_STOP" and anti_whipsaw:
         problems.append("AX_ENTRY_STOP combined with InpUseAntiWhipsaw=true (they fight each other)")
-
-    # Waiting for a pullback while demanding a fresh structure break is a
-    # contradiction: by the time the price pulls back the break is no longer fresh.
     if entry == "AX_ENTRY_LIMIT" and struct == "AX_STRUCT_REQUIRE_FRESH":
         problems.append("AX_ENTRY_LIMIT combined with AX_STRUCT_REQUIRE_FRESH (contradiction)")
-
-    # A single runner target makes no sense when the exit is a split/trail exit.
+    if entry == "AX_ENTRY_LIMIT" and str(values.get("InpPendingFallbackMkt", "true")).lower() == "true":
+        problems.append("AX_ENTRY_LIMIT with InpPendingFallbackMkt=true (pullback preset turns into a market preset)")
     if exit_mode == "AX_EXIT_TP2_ONLY" and str(values.get("InpKeepTP2OnOrder", "true")).lower() == "false":
         problems.append("AX_EXIT_TP2_ONLY without a server side TP2")
-
-    # Too many hard filters together with the strong-only gate leaves (almost) no trades.
     other_hard = [item for item in hard if item[0] != "quality"]
     if strong == "AX_STRONG_ONLY" and len(other_hard) > 4:
         problems.append("AX_STRONG_ONLY with more than 4 hard filters (practically no trades)")
-
-    # Mixing a limit entry with a stop entry is impossible by design (one input),
-    # but a limit entry with market fallback changes the strategy silently.
-    if entry == "AX_ENTRY_LIMIT" and str(values.get("InpPendingFallbackMkt", "true")).lower() == "true":
-        problems.append("AX_ENTRY_LIMIT with InpPendingFallbackMkt=true (pullback preset turns into a market preset)")
-
     if str(values.get("InpUsePineCancelRule", "false")).lower() == "true":
         problems.append("InpUsePineCancelRule is gold specific, keep it out of the presets")
+
+    # --- cost gates (the 0.47 USD spread research) -------------------------
+    def num(name):
+        return float(values.get(name, "0"))
+
+    if is_reference:
+        if str(values.get("InpUseCostFilters", "true")).lower() != "false":
+            problems.append("the reference preset must keep InpUseCostFilters=false")
+        if not pine_weights:
+            problems.append("the reference preset must use the original Pine weights")
+        if exit_mode != "AX_EXIT_TP1_ONLY":
+            problems.append("the reference preset must keep the original TP1-only exit")
+    else:
+        if str(values.get("InpUseCostFilters", "true")).lower() != "true":
+            problems.append("research presets must enable InpUseCostFilters")
+        if num("InpFixedSpreadPoints") != 47:
+            problems.append("research presets must assume the 47 point spread")
+        if num("InpMinATR") < 1.0:
+            problems.append("research presets need InpMinATR >= 1.0 (cost/risk ratio)")
+        if num("InpMinSLSpreadMult") < 2.0:
+            problems.append("research presets need InpMinSLSpreadMult >= 2.0")
+        if num("InpMinTargetSpreadMult") < 3.0:
+            problems.append("research presets need InpMinTargetSpreadMult >= 3.0")
+        if str(values.get("InpSkipTP1IfUneconomic", "false")).lower() != "true":
+            problems.append("research presets must keep InpSkipTP1IfUneconomic=true")
+        if values.get("InpMinADXRegime") in (None, "AX_REGIME_ANY"):
+            problems.append("research presets must require at least the medium ADX regime")
+        if exit_mode == "AX_EXIT_TP1_ONLY":
+            problems.append("the TP1-only exit is structurally unprofitable with a 0.47 spread")
+        if exit_mode == "AX_EXIT_SPLIT_BE" and num("InpTP1Portion") < 0.5:
+            problems.append("a partial TP1 below 50% leaves too much size for a small target")
+        if not pine_weights:
+            if num("InpWeightFib") > 15 or num("InpWeightStruct") > 15:
+                problems.append("research presets must not keep the 55% weight on fib + structure")
+            weight_sum = sum(num(n) for n in ("InpWeightFib", "InpWeightRSI", "InpWeightEMA",
+                                              "InpWeightStruct", "InpWeightMACD", "InpWeightVolume"))
+            if weight_sum <= 0:
+                problems.append("score weights must not all be zero")
+        if values.get("InpTrendTF") == "AX_TF_5":
+            problems.append("the trend filter timeframe must stay above the M1 chart")
 
     known = {item["name"] for item in inputs}
     unknown = sorted(set(values) - known)
@@ -222,354 +249,179 @@ def validate_coherence(preset, inputs):
     return hard
 
 
+
+
+# 3. Execution base and the research presets
 # --------------------------------------------------------------------------
-# 3. Common execution base and the combined presets
-# --------------------------------------------------------------------------
-# Identical in every preset, so that only the filter combination differs:
+# The base is identical in every preset so that a comparison measures the
+# filter combination and nothing else. It encodes the research conclusions for
+# XAUUSD M1 with a fixed 0.47 USD spread (see docs/AlgoX_M1_Filter_Research_fa.md):
+#   - target the TP2/runner, never the small TP1 (the spread eats it),
+#   - require a minimum ATR and a strong ADX regime,
+#   - require the geometry to be at least a few times the spread,
+#   - score the documented indicators (MACD, RSI, volume) and down-weight
+#     Fibonacci and the pivot structure break.
 BASE = {
-    # Deterministic position sizing (100 USD balance, 1.5% risk, 10 USD per
-    # 1.0 price move per lot) - keeps the presets comparable with the
-    # original indicator numbers. Use AX_SIZING_BROKER on a live account.
+    # deterministic sizing (100 USD balance, 1.5% risk, 10 USD per 1.0 move per lot)
+    # -> keeps the presets comparable with the original indicator numbers.
+    # Use AX_SIZING_BROKER on a live account.
     "InpSizingMode": "AX_SIZING_PINE_FIXED",
     "InpPineBalance": "100",
     "InpRiskPercent": "1.5",
     "InpPineLotValue": "10",
-    # Execution base: market entry, SL/TP re-centred on the real fill, split
-    # exit with a break-even move after TP1.
+    # execution base
     "InpEntryMode": "AX_ENTRY_MARKET",
     "InpSLAnchor": "AX_ANCHOR_RECENTER",
-    "InpExitMode": "AX_EXIT_SPLIT_BE",
-    "InpTP1Portion": "0.5",
-    "InpMoveToBEAtTP1": "true",
+    "InpExitMode": "AX_EXIT_TP2_BE",
     "InpKeepTP2OnOrder": "true",
+    "InpMoveToBEAtTP1": "true",
+    "InpOneSignalPerMove": "true",
+    "InpCooldownBars": "10",
+    # cost gates (the 47 cent spread)
+    "InpUseCostFilters": "true",
+    "InpFixedSpreadPoints": "47",
+    "InpMinATR": "1.0",
+    "InpMinADXRegime": "AX_REGIME_STRONG",
+    "InpMinSLSpreadMult": "2.0",
+    "InpMinTargetSpreadMult": "3.0",
+    "InpSkipTP1IfUneconomic": "true",
+    # rebalanced score weights (documented components carry the weight)
+    "InpWeightFib": "10",
+    "InpWeightRSI": "20",
+    "InpWeightEMA": "20",
+    "InpWeightStruct": "10",
+    "InpWeightMACD": "20",
+    "InpWeightVolume": "20",
+    "InpWeightHTF": "0",
 }
 
 PRESETS = [
     {
         "file": "00_Pine_Baseline",
-        "title": "Reference: the indicator itself, no filters",
+        "title": "Reference: the indicator itself, no cost gates",
         "family": "reference",
+        "weights": "pine",
         "theme": (
-            "Nothing is filtered: the plain score engine with the original thresholds, cooldown "
-            "and the original TP1 exit. This is the curve every combination is measured against."
+            "Faithful copy of the TradingView indicator: original score weights (fib 25, "
+            "structure 30, EMA 25, RSI 20), no MACD and no volume scoring, the original TP1 "
+            "exit with the reference SL/TP and no cost gates. Only kept as the comparison "
+            "baseline - the research shows this geometry cannot survive a 0.47 USD spread."
         ),
         "overrides": {
             "InpMagicNumber": "20260100",
+            "InpUseCostFilters": "false",
+            "InpMinADXRegime": "AX_REGIME_ANY",
+            "InpSkipTP1IfUneconomic": "false",
+            "InpWeightFib": "25",
+            "InpWeightRSI": "20",
+            "InpWeightEMA": "25",
+            "InpWeightStruct": "30",
+            "InpWeightMACD": "0",
+            "InpWeightVolume": "0",
             "InpSLAnchor": "AX_ANCHOR_REFERENCE",
             "InpExitMode": "AX_EXIT_TP1_ONLY",
             "InpMoveToBEAtTP1": "false",
             "InpKeepTP2OnOrder": "false",
+            "InpOneSignalPerMove": "false",
         },
     },
     {
-        "file": "01_Trend_Pullback_Confluence",
-        "title": "Trend + pullback location (limit entry)",
+        "file": "C1_Trend_Momentum",
+        "title": "Trend + momentum (ADX regime, MACD, RSI, volume)",
         "family": "trend",
         "theme": (
-            "Direction comes from the higher timeframe trend plus the structure bias, the entry "
-            "comes from a pullback: a limit order at the 30% level of the signal candle, valid for "
-            "three bars and only while the price is on the right side of the VWAP. Choppy, flat "
-            "conditions are skipped. The SuperTrend, the Fibonacci levels, volume and the 55/45 RSI "
-            "levels add score instead of blocking, so the same information is not required twice."
+            "The documented combination: the higher timeframe trend (M15 EMA 50) is required and "
+            "the MACD histogram must agree, while RSI (55/45 levels), the intraday regime "
+            "(EMA 5/10/20) and the relative volume carry the rebalanced score weight. The trade targets TP2 with the "
+            "stop moved to break-even at the TP1 distance, and it only fires when ATR(5) >= 1.0 "
+            "USD, ADX is strong and the geometry is at least 3x the spread - the research "
+            "thresholds for a 0.47 USD spread on gold M1."
         ),
         "overrides": {
             "InpMagicNumber": "20260101",
             "InpTrendFilterMode": "AX_MODE_REQUIRE",
-            "InpStructMode": "AX_STRUCT_FILTER",
-            "InpSTUse": "AX_MODE_SCORE",
-            "InpEntryMode": "AX_ENTRY_LIMIT",
-            "InpPendingExpiryBars": "3",
-            "InpPendingFallbackMkt": "false",
-            "InpVWAPMode": "AX_MODE_REQUIRE",
+            "InpTrendTF": "AX_TF_15",
+            "InpMACDMode": "AX_MODE_REQUIRE",
             "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpUseAntiWhipsaw": "true",
-            "InpConsolMultiplier": "0.85",
-            "InpConsolCDMultiplier": "1.25",
-            "InpUseSlopeFilter": "true",
-            "InpSlopeMin": "0.12",
-            "InpCooldownBars": "10",
+            "InpRegimeMode": "AX_MODE_SCORE",
+            "InpVolAvgMode": "AX_MODE_OFF",
+            "InpVolFilterMode": "AX_MODE_OFF",
+            "InpCooldownBars": "12",
         },
     },
     {
-        "file": "02_Trend_Continuation_Momentum",
-        "title": "Trend + momentum + volume expansion",
-        "family": "trend",
+        "file": "C2_Expansion_Breakout",
+        "title": "Expansion breakout (fresh structure + new extremes + volume)",
+        "family": "breakout",
         "theme": (
-            "The direction must be confirmed by two independent trend measurements (higher "
-            "timeframe EMA and the SuperTrend) and the move must be backed by momentum (MACD "
-            "histogram) and by rising participation (relative volume above 1.2x). The EMA regime, "
-            "the 55/45 RSI levels and the slope only add score, because they measure the same thing "
-            "the two trend filters already measure."
+            "The other documented combination: a fresh BOS/CHoCH structure break plus a close at "
+            "the 200-bar extreme, confirmed by relative volume (hard) and the MACD histogram "
+            "(score). Momentum is scored with the rebalanced weights, the entry is at market to "
+            "keep the entry method identical across the research presets, and the exit is TP2 "
+            "with the break-even trigger. Expansion trades only, so the anti-whipsaw penalty "
+            "stays off."
         ),
         "overrides": {
             "InpMagicNumber": "20260102",
-            "InpTrendFilterMode": "AX_MODE_REQUIRE",
-            "InpSTUse": "AX_MODE_REQUIRE",
-            "InpRegimeMode": "AX_MODE_SCORE",
-            "InpMACDMode": "AX_MODE_REQUIRE",
-            "InpVolFilterMode": "AX_MODE_REQUIRE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpUseSlopeFilter": "true",
-            "InpSlopeMin": "0.15",
-            "InpTrendBonus": "5",
-            "InpCooldownBars": "10",
-            "InpReEntryMode": "AX_REENTRY_BLOCK_SAME_DIR",
-        },
-    },
-    {
-        "file": "03_London_Trend_Session",
-        "title": "London session trend continuation",
-        "family": "session",
-        "theme": (
-            "The trend filters are only required from the higher timeframe and the SuperTrend, and "
-            "the preset trades the London session only, where trends develop: everything else "
-            "(MACD, 55/45 RSI levels, slope, relative volume, SuperTrend bonus) is a score "
-            "adjustment, so the session restriction does not kill the signal count."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260103",
-            "InpUseSessionFilter": "true",
-            "InpTradingSession": "AX_SESSION_LONDON",
-            "InpUseManualGMTOffset": "true",
-            "InpBrokerGMTOffsetHrs": "3",
-            "InpMaxSpreadPoints": "50",
-            "InpTrendFilterMode": "AX_MODE_REQUIRE",
-            "InpSTUse": "AX_MODE_REQUIRE",
-            "InpMACDMode": "AX_MODE_SCORE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpUseSlopeFilter": "true",
-            "InpSlopeMin": "0.1",
-            "InpCooldownBars": "8",
-        },
-    },
-    {
-        "file": "04_Breakout_Expansion",
-        "title": "Breakout + volume expansion + new extremes",
-        "family": "breakout",
-        "theme": (
-            "A pure expansion combo: a fresh BOS/CHoCH break, a close at the 200-bar extreme, a "
-            "MACD agreement and relative volume above 1.2x, entered with a stop order just beyond "
-            "the signal candle extreme (InpEntryPercent=90), so the position opens only when the "
-            "break really happens. Anti-whipsaw and the slope filter stay out on purpose: they "
-            "would suppress exactly the expansion this combo trades."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260104",
             "InpStructMode": "AX_STRUCT_REQUIRE_FRESH",
             "InpRange200Mode": "AX_MODE_REQUIRE",
-            "InpMACDMode": "AX_MODE_REQUIRE",
             "InpVolFilterMode": "AX_MODE_REQUIRE",
-            "InpExtraFibMode": "AX_FIBEXTRA_786",
-            "InpEntryMode": "AX_ENTRY_STOP",
-            "InpEntryPercent": "90",
-            "InpPendingExpiryBars": "2",
-            "InpPendingFallbackMkt": "false",
-            "InpOneSignalPerMove": "true",
+            "InpMACDMode": "AX_MODE_SCORE",
+            "InpWeightMACD": "20",
             "InpCooldownBars": "5",
         },
     },
     {
-        "file": "05_NY_Breakout_Momentum",
-        "title": "New York session breakout momentum",
-        "family": "session",
+        "file": "C3_CostGates_Only",
+        "title": "Control: original score engine plus the cost gates only",
+        "family": "cost",
+        "weights": "pine",
         "theme": (
-            "The same breakout idea, tuned for the New York session (the most volatile window) and "
-            "with softer quality gates: participation above its average and MACD as hard filters, "
-            "200-bar extremes, SuperTrend and relative volume as score, plus a spread cap. Stop "
-            "entry beyond the signal candle keeps the entry adaptive."
+            "The control group: the original score engine (fib 25 / structure 30 / EMA 25 / RSI 20) "
+            "with no extra indicator block, but with the cost gates and the TP2 + break-even exit. "
+            "The difference against 00_Pine_Baseline isolates how much of the improvement comes "
+            "from the geometry alone (target size, ATR and ADX gates) instead of the filters."
         ),
         "overrides": {
-            "InpMagicNumber": "20260105",
+            "InpMagicNumber": "20260103",
+            "InpWeightFib": "25",
+            "InpWeightRSI": "20",
+            "InpWeightEMA": "25",
+            "InpWeightStruct": "30",
+            "InpWeightMACD": "0",
+            "InpWeightVolume": "0",
+            "InpCooldownBars": "10",
+        },
+    },
+    {
+        "file": "C4_Session_Expansion",
+        "title": "Session expansion (New York open, stricter ATR gate)",
+        "family": "session",
+        "theme": (
+            "C1 restricted to the New York session (16:01-21:59 UTC) with a stricter ATR gate "
+            "(1.2 USD) and a shorter cooldown, because the spread is paid in the window where "
+            "volatility actually expands. Trend (M15) and MACD are hard filters, RSI, regime and "
+            "volume score, exit is TP2 with the break-even trigger."
+        ),
+        "overrides": {
+            "InpMagicNumber": "20260104",
             "InpUseSessionFilter": "true",
             "InpTradingSession": "AX_SESSION_NEWYORK",
             "InpUseManualGMTOffset": "true",
             "InpBrokerGMTOffsetHrs": "3",
-            "InpMaxSpreadPoints": "60",
-            "InpVolAvgMode": "AX_MODE_REQUIRE",
+            "InpMinATR": "1.2",
+            "InpTrendFilterMode": "AX_MODE_REQUIRE",
+            "InpTrendTF": "AX_TF_15",
             "InpMACDMode": "AX_MODE_REQUIRE",
-            "InpRange200Mode": "AX_MODE_SCORE",
-            "InpSTUse": "AX_MODE_SCORE",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpEntryMode": "AX_ENTRY_STOP",
-            "InpEntryPercent": "90",
-            "InpPendingExpiryBars": "2",
-            "InpPendingFallbackMkt": "false",
+            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
+            "InpRegimeMode": "AX_MODE_SCORE",
             "InpCooldownBars": "5",
-        },
-    },
-    {
-        "file": "06_Confluence_Max_Quality",
-        "title": "Maximum confluence (few, fully confirmed trades)",
-        "family": "quality",
-        "theme": (
-            "Only signals at or above the strong threshold (85) are traded, and they must be "
-            "aligned with the higher timeframe trend, the structure bias, the MACD histogram and "
-            "the volume average (participation). The remaining confirmations (relative volume "
-            "bonus, regime, 55/45 RSI levels) add score instead of blocking, and the same direction "
-            "is traded once per day - four hard filters plus the strong gate is the practical limit "
-            "before a preset stops trading altogether."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260106",
-            "InpStrongMode": "AX_STRONG_ONLY",
-            "InpTrendFilterMode": "AX_MODE_REQUIRE",
-            "InpStructMode": "AX_STRUCT_FILTER",
-            "InpMACDMode": "AX_MODE_REQUIRE",
-            "InpVolAvgMode": "AX_MODE_REQUIRE",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpRegimeMode": "AX_MODE_SCORE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpOneSignalPerMove": "true",
-            "InpReEntryMode": "AX_REENTRY_BLOCK_SAME_DAY",
-            "InpCooldownBars": "12",
-        },
-    },
-    {
-        "file": "07_Defensive_Low_Risk",
-        "title": "Defensive: trade rarely, small, take profits early",
-        "family": "quality",
-        "theme": (
-            "Capital protection combo: only strong signals (score >= 85), consolidation and flat "
-            "moves are skipped, the cooldown is long, one signal per move, the spread is capped, "
-            "the risk per trade is halved (0.75%) and the position is closed completely at TP1 - no "
-            "runner, no open risk while the market is quiet."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260107",
-            "InpStrongMode": "AX_STRONG_ONLY",
-            "InpUseAntiWhipsaw": "true",
-            "InpConsolMultiplier": "0.8",
-            "InpConsolCDMultiplier": "1.5",
-            "InpUseSlopeFilter": "true",
-            "InpSlopeMin": "0.2",
-            "InpMaxSpreadPoints": "40",
-            "InpCooldownBars": "20",
-            "InpOneSignalPerMove": "true",
-            "InpRiskPercent": "0.75",
-            "InpExitMode": "AX_EXIT_TP1_ONLY",
-            "InpMoveToBEAtTP1": "false",
-            "InpKeepTP2OnOrder": "false",
-        },
-    },
-    {
-        "file": "08_Value_VWAP_Balance",
-        "title": "Value entries: VWAP + Fibonacci, no trend mandate",
-        "family": "value",
-        "theme": (
-            "A two-way combo for balanced markets: no trend filter at all, the location filters do "
-            "the work (close beyond the 50% and the 78.6% Fibonacci levels, on the right side of "
-            "the VWAP) and the entry waits for a pullback with a limit order. The trend and volume "
-            "blocks add score only, and the anti-whipsaw penalty stays off because this combo "
-            "accepts ranging conditions."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260108",
-            "InpEntryMode": "AX_ENTRY_LIMIT",
-            "InpPendingExpiryBars": "3",
-            "InpPendingFallbackMkt": "false",
-            "InpExtraFibMode": "AX_FIBEXTRA_BOTH",
-            "InpVWAPMode": "AX_MODE_REQUIRE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpTrendFilterMode": "AX_MODE_BONUS",
-            "InpTrendBonus": "5",
-            "InpCooldownBars": "8",
-        },
-    },
-    {
-        "file": "09_Asia_Range_Value",
-        "title": "Asian session range value",
-        "family": "session",
-        "theme": (
-            "The Asian session usually ranges instead of trending, so this combo trades value "
-            "inside the balance: limit entry on the pullback, VWAP and both extra Fibonacci levels "
-            "as hard location filters, the 55/45 RSI levels and volume as score, no trend "
-            "requirement, and the whole position is closed at TP1 (a range target, not a runner)."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260109",
-            "InpUseSessionFilter": "true",
-            "InpTradingSession": "AX_SESSION_ASIA",
-            "InpUseManualGMTOffset": "true",
-            "InpBrokerGMTOffsetHrs": "3",
-            "InpMaxSpreadPoints": "50",
-            "InpEntryMode": "AX_ENTRY_LIMIT",
-            "InpPendingExpiryBars": "4",
-            "InpPendingFallbackMkt": "false",
-            "InpExtraFibMode": "AX_FIBEXTRA_BOTH",
-            "InpVWAPMode": "AX_MODE_REQUIRE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpExitMode": "AX_EXIT_TP1_ONLY",
-            "InpMoveToBEAtTP1": "false",
-            "InpKeepTP2OnOrder": "false",
-            "InpCooldownBars": "8",
-        },
-    },
-    {
-        "file": "10_Trend_Rider_Trailing",
-        "title": "Trend rider with a trailing runner",
-        "family": "trend",
-        "theme": (
-            "Built for long trends: direction from the higher timeframe trend and the structure "
-            "bias, soft confirmations from the SuperTrend, MACD, volume and slope, a partial exit "
-            "at TP1 with the stop moved to break-even and then an ATR trailing stop for the rest. "
-            "Strong signals (score >= 85) get 1.5x the normal risk, because the runner needs room."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260110",
-            "InpTrendFilterMode": "AX_MODE_REQUIRE",
-            "InpStructMode": "AX_STRUCT_FILTER",
-            "InpSTUse": "AX_MODE_SCORE",
-            "InpMACDMode": "AX_MODE_SCORE",
-            "InpRegimeMode": "AX_MODE_SCORE",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpUseSlopeFilter": "true",
-            "InpSlopeMin": "0.12",
-            "InpExitMode": "AX_EXIT_TRAIL_AFTER_TP1",
-            "InpTrailMode": "AX_TRAIL_BY_ATR",
-            "InpTrailATRMult": "2.0",
-            "InpKeepTP2OnOrder": "false",
-            "InpStrongMode": "AX_STRONG_BOOST_RISK",
-            "InpStrongRiskMult": "1.5",
-            "InpCooldownBars": "10",
-        },
-    },
-    {
-        "file": "11_AllWeather_Score_Based",
-        "title": "All-weather: one score, no hard blockers",
-        "family": "hybrid",
-        "theme": (
-            "For traders who dislike filter stacking: every confirmation of the EA contributes "
-            "score instead of blocking (higher timeframe trend bonus, SuperTrend, MACD, 55/45 RSI "
-            "levels, relative volume, 200-bar extremes, market regime) and only the consolidation "
-            "penalty (score x0.9 and a 1.2x cooldown) protects against choppy conditions. The "
-            "single threshold decides, so the trade count stays close to the baseline."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260111",
-            "InpTrendFilterMode": "AX_MODE_BONUS",
-            "InpTrendBonus": "5",
-            "InpSTUse": "AX_MODE_SCORE",
-            "InpMACDMode": "AX_MODE_SCORE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpVolFilterMode": "AX_MODE_SCORE",
-            "InpRange200Mode": "AX_MODE_SCORE",
-            "InpRegimeMode": "AX_MODE_SCORE",
-            "InpExtraWeight": "10",
-            "InpUseAntiWhipsaw": "true",
-            "InpConsolMultiplier": "0.9",
-            "InpConsolCDMultiplier": "1.2",
-            "InpCooldownBars": "12",
         },
     },
 ]
 
 
-# --------------------------------------------------------------------------
+
 # 4. Value formatting
 # --------------------------------------------------------------------------
 def format_value(value, var_type, enums):

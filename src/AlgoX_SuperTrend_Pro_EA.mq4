@@ -55,7 +55,15 @@ enum ENUM_AX_EXIT
    AX_EXIT_SPLIT_BE        = 0,  // Part at TP1, stop to break-even, rest at TP2
    AX_EXIT_TP1_ONLY        = 1,  // Whole position at TP1 (Pine behaviour)
    AX_EXIT_TP2_ONLY        = 2,  // Whole position at TP2
-   AX_EXIT_TRAIL_AFTER_TP1 = 3   // Part at TP1, stop to break-even, then trailing stop
+   AX_EXIT_TRAIL_AFTER_TP1 = 3,  // Part at TP1, stop to break-even, then trailing stop
+   AX_EXIT_TP2_BE          = 4   // Whole position at TP2, stop to break-even at the TP1 distance (research default)
+};
+
+enum ENUM_AX_REGIME
+{
+   AX_REGIME_ANY    = 0,  // Any regime (weak included)
+   AX_REGIME_MEDIUM = 1,  // Medium and strong only (ADX >= weak threshold)
+   AX_REGIME_STRONG = 2   // Strong only (ADX >= strong threshold) - recommended for M1
 };
 
 enum ENUM_AX_SENS
@@ -179,7 +187,23 @@ input ENUM_AX_ANCHOR     InpSLAnchor            = AX_ANCHOR_RECENTER; // SL/TP a
 input bool               InpUsePineCancelRule   = false;     // [EXTRA] Apply the odd 0.50 activation window
 input double             InpPineCancelWindow    = 0.50;      // Width of that window (price units, gold specific)
 
+//--- Cost gates (research based, built for XAUUSD M1 with a 0.47 USD spread)
+input bool               InpUseCostFilters      = true;      // [RESEARCH] Enable the cost / regime gates
+input int                InpFixedSpreadPoints   = 47;        // [RESEARCH] Assumed spread in points (47 pts = 0.47 USD on 2-digit gold)
+input double             InpMinATR              = 1.0;       // [RESEARCH] Minimum ATR(5) in price units (0 = off)
+input ENUM_AX_REGIME     InpMinADXRegime        = AX_REGIME_STRONG; // [RESEARCH] Minimum ADX regime
+input double             InpMinSLSpreadMult     = 2.0;       // [RESEARCH] Require SL >= this x spread (0 = off)
+input double             InpMinTargetSpreadMult = 3.0;       // [RESEARCH] Require TP >= this x spread (0 = off)
+input bool               InpSkipTP1IfUneconomic = true;      // [RESEARCH] Skip the TP1 exit when it is smaller than the TP requirement
+
 //--- Score engine -----------------------------------------------------
+input double             InpWeightFib           = 10;        // [RESEARCH] Score weight: Fibonacci (Pine used 25)
+input double             InpWeightRSI           = 20;        // Score weight: RSI (Pine 20)
+input double             InpWeightEMA           = 20;        // Score weight: EMA (Pine 25)
+input double             InpWeightStruct        = 10;        // [RESEARCH] Score weight: structure break (Pine 30)
+input double             InpWeightMACD          = 20;        // [RESEARCH] Score weight: MACD histogram (Pine 0)
+input double             InpWeightVolume        = 20;        // [RESEARCH] Score weight: relative volume (Pine 0)
+input double             InpWeightHTF           = 0;         // [RESEARCH] HTF trend bonus weight (0 = use InpTrendBonus)
 input ENUM_AX_SENS       InpSensitivity         = AX_SENS_BALANCED; // Signal sensitivity       [PINE DEFAULT]
 input double             InpMinThreshold        = 55;        // Min score to enter (CUSTOM sensitivity)
 input double             InpStrongThreshold     = 85;        // Strong score threshold (CUSTOM sensitivity)
@@ -329,6 +353,8 @@ double   g_tp2               = 0.0;
 bool     g_tp1Done           = false;
 
 datetime g_pendingBarTime    = 0;
+ENUM_AX_EXIT g_effExit       = AX_EXIT_SPLIT_BE;  // exit mode actually used for this trade
+double   g_beTrigger         = 0.0;               // price that moves the stop to break-even (0 = off)
 
 //+------------------------------------------------------------------+
 //| Small helpers                                                    |
@@ -812,7 +838,7 @@ void GetThresholds(AlgoXInd &ind)
 //+------------------------------------------------------------------+
 double VolumeScoreAdjustment(AlgoXInd &ind)
 {
-   if(InpVolFilterMode == AX_MODE_OFF) return(0.0);
+   if(InpVolFilterMode != AX_MODE_SCORE) return(0.0);
 
    bool volIsStrong = (ind.volRelative >= InpVolRelBullish);
    bool volIsWeak   = (ind.volRelative <= InpVolRelWeak);
@@ -930,10 +956,17 @@ double ExtraScoreAdjust(AlgoXInd &ind, const bool buySide)
    double c1  = iClose(_Symbol, _Period, 1);
    double adj = 0.0;
 
-   if(InpMACDMode == AX_MODE_SCORE)
+   if(InpMACDMode == AX_MODE_SCORE && InpWeightMACD <= 0.0)
    {
       if(buySide  && ind.macdHist > 0.0) adj += InpExtraWeight;
       if(!buySide && ind.macdHist < 0.0) adj += InpExtraWeight;
+   }
+   //--- higher timeframe trend as a score component ---------------------
+   if(InpTrendFilterMode == AX_MODE_SCORE)
+   {
+      double htfWeight = (InpWeightHTF > 0.0) ? InpWeightHTF : InpExtraWeight;
+      if(buySide  && ind.higherTFUp)   adj += htfWeight;
+      if(!buySide && ind.higherTFDown) adj += htfWeight;
    }
    if(InpVWAPMode == AX_MODE_SCORE && ind.vwap > 0.0)
    {
@@ -969,7 +1002,7 @@ void BuildScores(AlgoXInd &ind)
 {
    double c1 = iClose(_Symbol, _Period, 1);
 
-   //--- weighted components: fib 25 / RSI 20 / EMA 25 / structure 30 ---
+   //--- binary components ------------------------------------------------
    bool buyFib     = (c1 > ind.fib618);
    bool sellFib    = (c1 < ind.fib382);
    bool buyEma     = (c1 > ind.ema20);
@@ -988,23 +1021,38 @@ void BuildScores(AlgoXInd &ind)
       buyRsi  = (ind.rsi > 50.0);
       sellRsi = (ind.rsi < 50.0);
    }
+
+   //--- macd histogram (component with its own weight) --------------------
+   bool macdScores = ComponentScores(InpMACDMode, InpWeightMACD);
+   bool buyMacd    = macdScores && (ind.macdHist > 0.0);
+   bool sellMacd   = macdScores && (ind.macdHist < 0.0);
+
+   //--- relative volume (component with its own weight) -------------------
+   bool volScores  = ComponentScores(InpVolFilterMode, InpWeightVolume);
+   bool volumeOk   = volScores && (ind.volRelative >= InpVolRelBullish);
+
+   //--- weighted sum ------------------------------------------------------
    double buy  = 0.0;
    double sell = 0.0;
-   if(buyFib)    buy  += 25.0;
-   if(buyRsi)    buy  += 20.0;
-   if(buyEma)    buy  += 25.0;
-   if(buyStruct) buy  += 30.0;
+   if(buyFib)     buy  += InpWeightFib;
+   if(buyRsi)     buy  += InpWeightRSI;
+   if(buyEma)     buy  += InpWeightEMA;
+   if(buyStruct)  buy  += InpWeightStruct;
+   if(buyMacd)    buy  += InpWeightMACD;
+   if(volumeOk)   buy  += InpWeightVolume;
 
-   if(sellFib)    sell += 25.0;
-   if(sellRsi)    sell += 20.0;
-   if(sellEma)    sell += 25.0;
-   if(sellStruct) sell += 30.0;
+   if(sellFib)    sell += InpWeightFib;
+   if(sellRsi)    sell += InpWeightRSI;
+   if(sellEma)    sell += InpWeightEMA;
+   if(sellStruct) sell += InpWeightStruct;
+   if(sellMacd)   sell += InpWeightMACD;
+   if(volumeOk)   sell += InpWeightVolume;
 
-   //--- extra score filters (all off by default) -------------------------
+   //--- extra score filters of the other optional blocks ------------------
    buy  += ExtraScoreAdjust(ind, true);
    sell += ExtraScoreAdjust(ind, false);
 
-   //--- relative volume bonus / penalty (applied to both sides) ----------
+   //--- Pine style relative volume bonus / penalty (kept for compatibility)
    double volAdj = VolumeScoreAdjustment(ind);
    buy  += volAdj;
    sell += volAdj;
@@ -1017,8 +1065,9 @@ void BuildScores(AlgoXInd &ind)
    //--- higher timeframe trend bonus --------------------------------------
    if(InpTrendFilterMode == AX_MODE_BONUS)
    {
-      if(ind.higherTFUp)   buy  += InpTrendBonus;
-      if(ind.higherTFDown) sell += InpTrendBonus;
+      double bonus = (InpWeightHTF > 0.0) ? InpWeightHTF : InpTrendBonus;
+      if(ind.higherTFUp)   buy  += bonus;
+      if(ind.higherTFDown) sell += bonus;
    }
 
    ind.buyScore  = buy;
@@ -1080,6 +1129,8 @@ void SaveTradeState(const int ticket, const double riskDist, const double rr,
    GlobalVariableSet(GvName(ticket, "tp1"),   tp1);
    GlobalVariableSet(GvName(ticket, "tp2"),   tp2);
    GlobalVariableSet(GvName(ticket, "stage"), (double)stage);
+   GlobalVariableSet(GvName(ticket, "mode"),  (double)g_effExit);
+   GlobalVariableSet(GvName(ticket, "betrig"), g_beTrigger);
 }
 
 bool LoadTradeState(const int ticket)
@@ -1090,6 +1141,9 @@ bool LoadTradeState(const int ticket)
    g_tp1      = GlobalVariableCheck(GvName(ticket, "tp1")) ? GlobalVariableGet(GvName(ticket, "tp1")) : 0.0;
    g_tp2      = GlobalVariableCheck(GvName(ticket, "tp2")) ? GlobalVariableGet(GvName(ticket, "tp2")) : 0.0;
    g_tp1Done  = (GlobalVariableCheck(GvName(ticket, "stage")) && GlobalVariableGet(GvName(ticket, "stage")) >= 1.0);
+   g_effExit  = GlobalVariableCheck(GvName(ticket, "mode"))
+                ? (ENUM_AX_EXIT)(int)GlobalVariableGet(GvName(ticket, "mode")) : InpExitMode;
+   g_beTrigger= GlobalVariableCheck(GvName(ticket, "betrig")) ? GlobalVariableGet(GvName(ticket, "betrig")) : 0.0;
    return(true);
 }
 
@@ -1100,6 +1154,8 @@ void DeleteTradeState(const int ticket)
    GlobalVariableDel(GvName(ticket, "tp1"));
    GlobalVariableDel(GvName(ticket, "tp2"));
    GlobalVariableDel(GvName(ticket, "stage"));
+   GlobalVariableDel(GvName(ticket, "mode"));
+   GlobalVariableDel(GvName(ticket, "betrig"));
 }
 
 //+------------------------------------------------------------------+
@@ -1209,6 +1265,25 @@ bool SpreadOK()
    return(spread <= InpMaxSpreadPoints);
 }
 
+//--- Spread used by the cost gates. The fixed value is what the research
+//--- assumed (47 points = 0.47 USD on a 2-digit gold quote); without it the
+//--- live spread of the symbol is used.
+double EffectiveSpread()
+{
+   if(InpUseCostFilters && InpFixedSpreadPoints > 0)
+      return(InpFixedSpreadPoints * Point);
+   return(MarketInfo(_Symbol, MODE_ASK) - MarketInfo(_Symbol, MODE_BID));
+}
+
+//--- A component contributes score when its mode is SCORE, or when the mode
+//--- is OFF but a positive weight was configured for it (auto-score mode).
+bool ComponentScores(const ENUM_AX_MODE mode, const double weight)
+{
+   if(mode == AX_MODE_REQUIRE) return(false);
+   if(mode == AX_MODE_SCORE)   return(true);
+   return(mode == AX_MODE_OFF && weight > 0.0);
+}
+
 //+------------------------------------------------------------------+
 //| Trade execution                                                   |
 //+------------------------------------------------------------------+
@@ -1292,9 +1367,9 @@ void ApplyAnchorOnAdopt(const int ticket)
                      : (fill - g_riskDist * g_rr * InpTP2Multiplier);
    double nsl = (dir > 0) ? (fill - g_riskDist) : (fill + g_riskDist);
    double ntp;
-   if(InpExitMode == AX_EXIT_TP1_ONLY)      ntp = g_tp1;
-   else if(InpExitMode == AX_EXIT_TP2_ONLY) ntp = g_tp2;
-   else                                     ntp = InpKeepTP2OnOrder ? g_tp2 : 0.0;
+   if(g_effExit == AX_EXIT_TP1_ONLY)      ntp = g_tp1;
+   else if(g_effExit == AX_EXIT_TP2_ONLY) ntp = g_tp2;
+   else                                   ntp = InpKeepTP2OnOrder ? g_tp2 : 0.0;
 
    ApplyStopLossTakeProfit(ticket, nsl, ntp);
 }
@@ -1318,6 +1393,8 @@ void AdoptPosition(const int ticket)
       g_rr       = 0.0;
       g_tp1      = OrderTakeProfit();
       g_tp2      = OrderTakeProfit();
+      g_effExit  = InpExitMode;
+      g_beTrigger= 0.0;
       SaveTradeState(ticket, g_riskDist, 0.0, g_tp1, g_tp2, 0);
    }
    if(g_riskDist <= 0.0 && OrderStopLoss() > 0.0)
@@ -1347,6 +1424,8 @@ void OnTradeClosed()
    g_entryPrice = 0.0;
    g_tp1Done    = false;
    g_riskDist   = 0.0;
+   g_beTrigger  = 0.0;
+   g_effExit    = InpExitMode;
 
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
@@ -1377,6 +1456,30 @@ bool ClosePosition(const int ticket, const double lots)
       return(false);
    }
    LogMsg("Closed " + DoubleToString(lots, 2) + " lots on #" + IntegerToString(ticket));
+   return(true);
+}
+
+//+------------------------------------------------------------------+
+//| Move the stop to break-even (shared by the TP1 and the cost paths) |
+//+------------------------------------------------------------------+
+bool MoveStopToBreakEven(const int dir, const double bid, const double ask, const double stopDist)
+{
+   if(!OrderSelect(g_ticket, SELECT_BY_TICKET)) return(false);
+   if(!InpMoveToBEAtTP1) return(false);
+
+   double be     = OrderOpenPrice() + dir * InpBEPlusPoints * Point;
+   bool   ok     = (dir > 0) ? (be <= bid - stopDist) : (be >= ask + stopDist);
+   double cur    = OrderStopLoss();
+   bool   better = (dir > 0) ? (be > cur) : (cur == 0.0 || be < cur);
+   if(!ok || !better) return(false);
+
+   if(!OrderModify(g_ticket, OrderOpenPrice(), NormalizeDouble(be, Digits),
+                   OrderTakeProfit(), 0, clrYellow))
+   {
+      LogMsg("Break-even OrderModify failed err=" + IntegerToString(GetLastError()));
+      return(false);
+   }
+   LogMsg("Stop moved to break-even at " + DoubleToString(be, Digits));
    return(true);
 }
 
@@ -1414,7 +1517,8 @@ void ManageOpenPosition()
       }
    }
 
-   bool splitMode = (InpExitMode == AX_EXIT_SPLIT_BE || InpExitMode == AX_EXIT_TRAIL_AFTER_TP1);
+   bool splitMode = (g_effExit == AX_EXIT_SPLIT_BE || g_effExit == AX_EXIT_TRAIL_AFTER_TP1);
+   //--- (AX_EXIT_TP2_BE trades use a single TP plus the break-even trigger)
 
    //--- TP1 partial close ------------------------------------------------
    if(splitMode && !g_tp1Done && g_tp1 > 0.0)
@@ -1447,29 +1551,40 @@ void ManageOpenPosition()
             return;   // partial close failed - retry on the next tick
 
          //--- move the stop to break-even ---------------------------------
-         if(InpMoveToBEAtTP1 && OrderSelect(g_ticket, SELECT_BY_TICKET))
-         {
-            double be     = OrderOpenPrice() + dir * InpBEPlusPoints * Point;
-            bool   ok     = (dir > 0) ? (be <= bid - stopDist) : (be >= ask + stopDist);
-            double cur    = OrderStopLoss();
-            bool   better = (dir > 0) ? (be > cur) : (cur == 0.0 || be < cur);
-            if(ok && better)
-            {
-               if(!OrderModify(g_ticket, OrderOpenPrice(), NormalizeDouble(be, Digits),
-                               OrderTakeProfit(), 0, clrYellow))
-                  LogMsg("Break-even OrderModify failed err=" + IntegerToString(GetLastError()));
-               else
-                  LogMsg("Stop moved to break-even at " + DoubleToString(be, Digits));
-            }
-         }
+         MoveStopToBreakEven(dir, bid, ask, stopDist);
          g_tp1Done = true;
          SaveTradeState(g_ticket, g_riskDist, g_rr, g_tp1, g_tp2, 1);
          return;
       }
    }
 
+   //--- break-even move triggered by price (cost-gated trades without TP1) --
+   if(!g_tp1Done && g_beTrigger > 0.0)
+   {
+      bool reached = (dir > 0) ? (px >= g_beTrigger) : (px <= g_beTrigger);
+      if(reached)
+      {
+         if(MoveStopToBreakEven(dir, bid, ask, stopDist))
+         {
+            g_tp1Done = true;
+            SaveTradeState(g_ticket, g_riskDist, g_rr, g_tp1, g_tp2, 1);
+            return;
+         }
+         if(!InpMoveToBEAtTP1)
+         {
+            //--- break-even is disabled: there is nothing left to wait for ------
+            g_tp1Done = true;
+            SaveTradeState(g_ticket, g_riskDist, g_rr, g_tp1, g_tp2, 1);
+            return;
+         }
+         //--- otherwise retry on the next tick: the stop is simply not far
+         //--- enough below/above the entry yet.
+      }
+   }
+
    //--- TP2 exit for the remaining part when no server side TP is used -----
-   if(splitMode && g_tp1Done && !InpKeepTP2OnOrder && g_tp2 > 0.0)
+   bool tp2Armed = (g_effExit == AX_EXIT_TP2_ONLY) || g_tp1Done;
+   if(tp2Armed && !InpKeepTP2OnOrder && g_tp2 > 0.0)
    {
       bool hitTP2 = (dir > 0) ? (px >= g_tp2) : (px <= g_tp2);
       if(hitTP2)
@@ -1613,11 +1728,72 @@ void ExecuteSignal(const int dir, const double refEntry)
       tp2Ref = refEntry - riskDist * rr * tp2Mult;
    }
 
+   //--- cost gates: the trade geometry must be large enough for the spread --
+   double spread    = EffectiveSpread();
+   double tp1Dist   = riskDist * rr;
+   double tp2Dist   = tp1Dist * tp2Mult;
+   bool   skipTP1   = false;
+   g_beTrigger      = 0.0;
+   g_effExit        = InpExitMode;
+
+   if(InpUseCostFilters)
+   {
+      if(InpMinSLSpreadMult > 0.0 && riskDist < InpMinSLSpreadMult * spread)
+      {
+         LogMsg("Signal skipped: SL " + DoubleToString(riskDist, Digits) +
+                " is smaller than " + DoubleToString(InpMinSLSpreadMult, 1) +
+                " x spread (" + DoubleToString(spread, Digits) + ")");
+         return;
+      }
+      if(InpMinTargetSpreadMult > 0.0 && tp2Dist < InpMinTargetSpreadMult * spread)
+      {
+         LogMsg("Signal skipped: TP2 " + DoubleToString(tp2Dist, Digits) +
+                " is smaller than " + DoubleToString(InpMinTargetSpreadMult, 1) +
+                " x spread (" + DoubleToString(spread, Digits) + ")");
+         return;
+      }
+      if(InpSkipTP1IfUneconomic && tp1Dist < InpMinTargetSpreadMult * spread)
+      {
+         skipTP1 = true;
+         LogMsg("TP1 (" + DoubleToString(tp1Dist, Digits) +
+                ") is too small against the spread - the trade targets TP2 instead");
+      }
+   }
+
+   //--- effective exit plan for this trade --------------------------------
+   if(InpExitMode == AX_EXIT_TP2_BE)
+   {
+      g_effExit   = AX_EXIT_TP2_ONLY;   // single target, no partial close
+      g_beTrigger = tp1Ref;             // stop moves to break-even at the TP1 distance
+   }
+
+   if(skipTP1)
+   {
+      switch(InpExitMode)
+      {
+         case AX_EXIT_TP1_ONLY:
+            g_effExit = AX_EXIT_TP2_ONLY;
+            break;
+         case AX_EXIT_SPLIT_BE:
+            g_effExit   = AX_EXIT_TP2_ONLY;      // no partial close, TP2 only
+            g_beTrigger = tp1Ref;                // but the stop still moves to BE at TP1
+            break;
+         case AX_EXIT_TRAIL_AFTER_TP1:
+            g_effExit   = AX_EXIT_TP2_ONLY;      // trailing starts after the BE move
+            g_beTrigger = tp1Ref;
+            break;
+         default: // AX_EXIT_TP2_ONLY stays as it is
+            break;
+      }
+   }
+   else if(InpExitMode == AX_EXIT_TRAIL_AFTER_TP1)
+      g_beTrigger = 0.0;
+
    double lots    = ComputeLots(riskDist, dir);
    double orderTP = 0.0;
-   if(InpExitMode == AX_EXIT_TP1_ONLY)      orderTP = tp1Ref;
-   else if(InpExitMode == AX_EXIT_TP2_ONLY) orderTP = tp2Ref;
-   else                                     orderTP = InpKeepTP2OnOrder ? tp2Ref : 0.0;
+   if(g_effExit == AX_EXIT_TP1_ONLY)      orderTP = tp1Ref;
+   else if(g_effExit == AX_EXIT_TP2_ONLY) orderTP = tp2Ref;
+   else                                   orderTP = InpKeepTP2OnOrder ? tp2Ref : 0.0;
 
    string cmt = (dir > 0) ? "AlgoX-BUY" : "AlgoX-SELL";
 
@@ -1629,6 +1805,9 @@ void ExecuteSignal(const int dir, const double refEntry)
           " lots=" + DoubleToString(lots, 2) +
           " ATR=" + DoubleToString(g_ind.atr, Digits) +
           " ADX=" + DoubleToString(g_ind.adx, 1) + "(" + g_ind.adxLevelName + ")" +
+          " spread=" + DoubleToString(spread, Digits) +
+          " exit=" + IntegerToString((int)g_effExit) +
+          (g_beTrigger > 0.0 ? " BE@" + DoubleToString(g_beTrigger, Digits) : "") +
           (g_ind.consol ? " [CONSOLIDATION]" : ""));
 
    //--- register the signal (Pine: lastSignalBar / lastDir) -------------
@@ -1723,6 +1902,25 @@ void OnNewBarUpdate()
    }
 
    if(!ComputeIndicators(g_ind)) return;
+
+   //--- cost / regime gates (research based) ------------------------------
+   if(InpUseCostFilters)
+   {
+      //--- the trade must be big enough for the spread not to eat the edge
+      if(InpMinATR > 0.0 && g_ind.atr < InpMinATR)
+      {
+         LogMsg("Signal check skipped: ATR " + DoubleToString(g_ind.atr, Digits) +
+                " below the minimum " + DoubleToString(InpMinATR, Digits));
+         return;
+      }
+      if(g_ind.adxLevel < (int)InpMinADXRegime)
+      {
+         LogMsg("Signal check skipped: ADX regime " + g_ind.adxLevelName +
+                " below the required minimum");
+         return;
+      }
+   }
+
    BuildScores(g_ind);
 
    //--- strong signal handling -------------------------------------------
