@@ -1599,7 +1599,7 @@ void ManageOpenPosition()
    }
 
    //--- trailing stop ------------------------------------------------------
-   if(InpExitMode == AX_EXIT_TRAIL_AFTER_TP1 && g_tp1Done)
+   if(g_effExit == AX_EXIT_TRAIL_AFTER_TP1 && g_tp1Done)
    {
       double dist = 0.0;
       if(InpTrailMode == AX_TRAIL_BY_ATR)
@@ -2017,6 +2017,21 @@ int OnInit()
    if(InpSizingMode == AX_SIZING_PINE_FIXED)
       Print("[AlgoX] NOTE: PINE_FIXED sizing uses the fixed balance of " +
             DoubleToString(InpPineBalance, 2) + " account currency.");
+   if(InpUseCostFilters)
+   {
+      Print("[AlgoX] COST GATES ON | spread assumption=", IntegerToString(InpFixedSpreadPoints),
+            " points | min ATR=", DoubleToString(InpMinATR, Digits),
+            " | min ADX regime=", IntegerToString((int)InpMinADXRegime),
+            " | SL>=", DoubleToString(InpMinSLSpreadMult, 1), "x spread",
+            " | TP>=", DoubleToString(InpMinTargetSpreadMult, 1), "x spread",
+            InpSkipTP1IfUneconomic ? " | skip TP1" : "");
+      if(InpFixedSpreadPoints == 47)
+         Print("[AlgoX] NOTE: the 47 point spread is the research assumption for XAUUSD M1 " +
+               "(0.47 USD on a 2 digit quote).");
+   }
+   if(InpExitMode == AX_EXIT_TP2_BE)
+      Print("[AlgoX] NOTE: AX_EXIT_TP2_BE closes the whole position at TP2 and moves the stop " +
+            "to break-even once the TP1 distance is reached.");
 
    Print("[AlgoX] SuperTrend Pro EA initialized | ", _Symbol, " TF=", IntegerToString(_Period),
          " | magic=", IntegerToString(InpMagicNumber),
