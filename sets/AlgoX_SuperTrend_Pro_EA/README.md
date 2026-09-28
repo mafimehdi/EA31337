@@ -1,191 +1,144 @@
-# AlgoX SuperTrend Pro EA - research presets (XAUUSD M1, 0.47 USD spread)
+# AlgoX SuperTrend Pro EA - M5 / M15 research presets (after the first live round)
 
-Ready-made MT4 presets for `src/AlgoX_SuperTrend_Pro_EA.mq4`, rebuilt around one target:
+Ready-made MT4 presets for `src/AlgoX_SuperTrend_Pro_EA.mq4`, rebuilt after four presets wiped
+real accounts. **Read the first section before running anything.**
 
-> **Symbol XAUUSD, chart timeframe M1, fixed spread 47 points (0.47 USD).**
-> Which filter combination survives those costs?
+## What happened in the first round (the honest version)
 
-The old "one idea per preset" set is replaced by **4 research presets + 1 reference baseline**.
-The full evidence (22 indicator blocks, per-block research, synergy map, cost model and the
-derivation of every threshold) is in `docs/AlgoX_M1_Filter_Research_fa.md`.
+Four presets (C1-C4) were built around a **0.47 USD spread on XAUUSD M1**. They were tested on
+Alpari-Standard3, 500 USD, 2026.01.01-2026.09.25, spread 47, Every tick:
 
-## How to use
+| Preset | Trades | Net | PF | Win % | Avg win | Avg loss | Break-even win % needed | Gap |
+|---|---|---|---|---|---|---|---|---|
+| C1 Trend-Momentum | 157 | -473.27 | 0.60 | 31.2 | 14.60 | -11.01 | 42.99 | **-11.78** |
+| C2 Expansion Breakout | 528 | -347.32 | 0.87 | 38.3 | 11.85 | -8.41 | 41.51 | **-3.25** |
+| C3 Cost-Gates Only | 256 | -462.94 | 0.64 | 34.0 | 9.48 | -7.62 | 44.56 | **-10.58** |
+| C4 Session Expansion | 235 | -461.13 | 0.64 | 33.6 | 10.18 | -8.11 | 44.34 | **-10.72** |
 
-1. Copy the `.set` file(s) into `<Terminal Data Folder>/MQL4/Presets`.
-2. Attach the EA, open its properties, switch to the **Inputs** tab.
-3. Press **Load**, choose the preset, then **OK**.
-4. Strategy Tester: `Strategy Tester -> Expert properties -> Inputs -> Load`.
+Three independent causes, none of them "the indicator is bad":
 
-Each file contains every input of the EA, so loading it fully replaces the previous settings
-(the magic number is unique per preset, so several presets can run side by side).
+1. **The cost.** On M1 gold the 0.47 spread is 28-50% of the ATR based risk distance. Every preset
+   needed a 41.5-44.6% win rate to break even and delivered 31-38%. Adding the spread back to the
+   results turns them roughly break-even to positive - the raw signal has a small edge, the spread
+   eats all of it.
+2. **A 10x sizing error (the account killer).** The presets used `PINE_FIXED` sizing, which assumes
+   the indicator's manual lot value (10 USD per 1.0 move per lot = a 10 oz contract). The broker
+   trades **100 oz** per lot, so the intended 1.50 USD risk per trade was really ~15 USD, i.e.
+   ~3.2% of a 500 USD account **per trade** - and four presets running side by side multiplied it.
+   The average loss in the reports (-8 to -11 USD) is exactly that number.
+3. **No account level safety.** The EA had no daily loss cap, no trade count cap, no margin cap and
+   no circuit breaker. The only guard was "free margin > 0", which fires when it is already too late.
 
-## Prebuilt archives (download)
+## What is different in this set
 
-Two ready-to-download archives are kept in `archive/`:
-
-- `AlgoX_SuperTrend_Pro_EA_complete.zip` - EA source, all presets, this README, the generator
-  script and the Persian guide.
-- `AlgoX_Set_Files_Only.zip` - only the `.set` files, flat, ready to be copied into `MQL4/Presets`.
-
-Download (branch `arena/01a0e88e-ea31337`):
-
-- complete:
-  `https://github.com/mafimehdi/EA31337/raw/arena/01a0e88e-ea31337/sets/AlgoX_SuperTrend_Pro_EA/archive/AlgoX_SuperTrend_Pro_EA_complete.zip`
-- set files only:
-  `https://github.com/mafimehdi/EA31337/raw/arena/01a0e88e-ea31337/sets/AlgoX_SuperTrend_Pro_EA/archive/AlgoX_Set_Files_Only.zip`
-
-## Why the presets look like this (short version of the research)
-
-With a 0.47 USD spread on gold M1 the arithmetic is unforgiving:
-
-| Regime (ADX) | R:R of the original indicator | Zero-cost break-even win rate | Break-even win rate with 0.47 spread |
-|---|---|---|---|
-| weak (<20) | 0.65 | 60.6% | above 70% - not tradable |
-| medium (20-40) | 0.75 | 57.1% | above 70% - not tradable |
-| strong (>=40) | 1.50 | 40.0% | ~48-55% depending on the ATR |
-
-Exit choice for a strong regime (spread included in the target):
-
-| Exit | TP size | Break-even win rate |
+| | First round | This set |
 |---|---|---|
-| TP1 only | 0.8 x ATR | 54.7% |
-| TP1 only | 1.0 x ATR | 51.8% |
-| **TP2 (1.5 x TP1)** | **1.2 x ATR** | **42.1%** |
-| **TP2** | **1.5 x ATR** | **39.8%** |
-
-Two conclusions drive everything:
-
-1. **The small TP1 cannot pay the spread.** The trade must target TP2 / the runner, and the stop
-   must still be wide enough not to be noise (ATR based stops below 1 x ATR are hit by noise in
-   more than 65% of the cases within three bars).
-2. **The score engine had its weight in the wrong place.** 55% of the score sat on Fibonacci
-   (25) and the pivot structure break (30) - the two blocks with the weakest evidence - while the
-   blocks with the strongest published evidence (MACD, volume) were off by default. The presets
-   therefore use rebalanced weights: fib 10, structure 10, EMA 20, RSI 20, MACD 20, volume 20.
-
-Cost gates added to the EA for exactly this purpose (all inputs, all adjustable):
-`InpUseCostFilters`, `InpFixedSpreadPoints=47`, `InpMinATR=1.0`, `InpMinADXRegime`,
-`InpMinSLSpreadMult=2.0`, `InpMinTargetSpreadMult=3.0`, `InpSkipTP1IfUneconomic`.
+| Chart timeframe | M1 | **M5 and M15** |
+| Spread share of risk | 28-50% | **~13% (M5), ~9% (M15)** |
+| Sizing | PINE_FIXED (10 oz assumption) | **AX_SIZING_BROKER, 0.5% of real equity** |
+| Margin guard | none | **max 5% of equity per trade** |
+| Daily loss cap | none | **3% of the day start equity, then stop** |
+| Trade count cap | none | **3 entries per day** |
+| Loss streak cap | none | **4 consecutive losses, then stop for the day** |
+| Circuit breaker | none | **-20% equity: close and halt until reload** |
+| Live spread cap | off | **60 points** |
+| Parallel presets per account | up to 4 | **1 - enforced in the README and the generator** |
 
 ## The presets
 
-| # | File | Idea | Hard filters | Weights |
+| File | Timeframe | Idea | Hard filters | ATR gate |
 |---|---|---|---|---|
-| 00 | `00_Pine_Baseline` | the indicator itself, no cost gates | none | Pine (25/20/25/30) |
-| C1 | `C1_Trend_Momentum` | trend + momentum + volume | M15 trend, MACD | research (10/20/20/10/20/20) |
-| C2 | `C2_Expansion_Breakout` | expansion breakout | fresh structure, 200-bar extreme, RVOL | research + MACD |
-| C3 | `C3_CostGates_Only` | control: old score engine + cost gates | none (cost gates only) | Pine |
-| C4 | `C4_Session_Expansion` | New York session expansion | M15 trend, MACD, NY session | research |
+| `00_Pine_Baseline` | M5/M15 (runs on any) | the raw signal, no cost gates - the control | none | off |
+| `M15_A_Breakout_Volume` | M15 | expansion breakout + volume (the best of round 1) | structure, RVOL, 200-bar | 3.0 USD |
+| `M15_B_Trend_Runner` | M15 | trend + momentum with an ATR trailing runner | H1 trend, MACD | 3.0 USD |
+| `M15_C_NY_Expansion` | M15 | A + New York session only | structure, RVOL, 200-bar, NY | 3.5 USD |
+| `M5_A_Breakout_Volume` | M5 | the same breakout, faster | structure, RVOL, 200-bar | 2.0 USD |
+| `M5_B_Trend_Momentum` | M5 | trend (M30) + MACD | M30 trend, MACD | 2.0 USD |
+| `M5_C_NY_Expansion` | M5 | M5_A in the New York session | structure, RVOL, 200-bar, NY | 2.5 USD |
 
-**The comparison is the product.** 00 versus C3 measures how much the geometry alone is worth;
-C3 versus C1 measures how much the documented filter combination adds on top of that geometry.
+All research presets target **TP2 with the stop moved to break-even at the TP1 distance**
+(`AX_EXIT_TP2_BE`); `M15_B` uses the ATR trailing runner instead (`AX_EXIT_TRAIL_AFTER_TP1`,
+2x ATR). No preset uses the TP1-only exit - it cannot pay a 0.47 spread.
 
-### Common base of every preset
+## How to test (in this order, one at a time)
 
-Identical in all files, so that a difference between two presets is a difference of filters:
+**Step 0 - the diagnostic that decides everything.** Run `00_Pine_Baseline` twice on M15 and on M5,
+same period, same symbol:
 
-- Sizing: `AX_SIZING_PINE_FIXED`, balance 100, risk 1.5%, lot value 10 USD per 1.0 move.
-  **Switch to `AX_SIZING_BROKER` (value 0) or `AX_SIZING_RISK_PERCENT` on a live account.**
-- Entry: `AX_ENTRY_MARKET` (same entry method everywhere -> the comparison is fair).
-- `InpSLAnchor=AX_ANCHOR_RECENTER`, `InpKeepTP2OnOrder=true`.
-- Cooldown 10 bars (5-12 in individual presets, always stated in the file header).
-- Cost gates as listed above; score weights as listed above (except where a row says otherwise).
+- once with the tester spread at **47** (the real cost),
+- once with the tester spread at **0** (the raw signal).
 
-### 00 - Pine Baseline (reference, do not trade it)
+If the spread-0 run has PF > 1.2 and the spread-47 run does not, the signal exists and the cost is
+the problem - the M5/M15 presets below are the right path. If the spread-0 run is also below PF 1.0,
+**no filter combination will save it on this symbol** and we change the signal (or the symbol),
+not the timeframe.
 
-Original score weights, no MACD, no volume scoring, original reference SL/TP, the original TP1
-exit, `InpUseCostFilters=false`. It exists to answer one question: *what does the raw indicator
-do under real costs?* The cost model says the answer is "lose slowly"; that number is the
-starting point of the whole comparison.
+**Step 1 - the candidates.** Run them one by one, never two on the same account:
 
-### C1 - Trend + momentum (the documented combination)
+1. `M15_A_Breakout_Volume` - the best hypothesis of round 1, now with ~9% cost share.
+2. `M15_B_Trend_Runner` - the trend variant with the runner exit.
+3. `M5_A_Breakout_Volume` - double the trades, ~13% cost share.
+4. `M15_C_NY_Expansion` / `M5_C_NY_Expansion` - the session limited versions.
 
-The MACD alone has a win rate below 50% in the published tests; MACD combined with RSI reaches
-0.84-0.86, and MACD combined with an ADX regime filter beats both the EMA crossover and buy and
-hold in the Bitcoin study. C1 encodes exactly that:
+Acceptance criteria before any real money: **PF > 1.2, at least 100 trades, and a drawdown you can
+survive on the smallest account you own.** Run it in the Strategy Tester and on a **demo** account
+for at least a month afterwards.
 
-- **Hard**: higher timeframe trend (M15 EMA 50) must agree, MACD histogram must agree.
-- **Score**: 55/45 RSI levels, market regime (EMA 5/10/20), volume average.
-- **Cost gates**: ATR(5) >= 1.0 USD, ADX in the strong regime, SL >= 2x spread, TP2 >= 3x spread.
-- **Exit**: whole position at TP2, stop moved to break-even at the TP1 distance
-  (`AX_EXIT_TP2_BE`), which is the only exit geometry the cost model leaves positive.
+**Step 2 - the tester settings that make the numbers comparable.** Symbol XAUUSD, period M15 or M5,
+model **Every tick**, and download the M1 history first: the first reports show a
+**modelling quality of 25%**, which means the tester was filling gaps in the tick data - the
+absolute numbers of that run are not trustworthy. In Alpari: `Tools -> History Center -> XAUUSD ->
+download M1`, then rerun. Spread: 47 for the comparison, 0 only for the diagnostic.
 
-### C2 - Expansion breakout
+## Account safety layer (new inputs, all adjustable)
 
-Breakouts need expansion, so this preset requires it instead of penalising it (anti-whipsaw and
-slope stay off):
+| Input | Preset value | What it does |
+|---|---|---|
+| `InpUseSafetyLimits` | true | master switch of every guard below |
+| `InpRiskPercentCap` | 1.0 | hard ceiling on the risk percent per trade |
+| `InpMaxMarginPercent` | 5.0 | max % of equity used as margin for one trade |
+| `InpMaxTradesPerDay` | 3 | entries per day, then stop |
+| `InpMaxDailyLossPercent` | 3.0 | stop for the day after this loss of the day start equity |
+| `InpMaxConsecutiveLosses` | 4 | stop for the day after N losing trades in a row |
+| `InpEquityStopPercent` | 20.0 | close and halt trading until the EA is reloaded |
+| `InpCloseOnEquityStop` | true | the position is closed when the circuit breaker fires |
 
-- **Hard**: fresh BOS/CHoCH structure break, close at the 200-bar extreme, relative volume >= 1.2x.
-- **Score**: MACD, RSI, EMA, EMA regime, the rebalanced weights.
-- **Exit**: TP2 + break-even trigger, cooldown 5 bars because the structure break itself is the
-  timing device.
+The EA also prints, at startup, the broker's real contract value
+(`1.0 price move per lot = X account currency`), the margin per lot and the risk percent in use -
+plus a warning if a fixed sizing mode is selected. When a trade is taken, the journal line contains
+the **real risk in account currency and as a % of the balance**, so a sizing error is visible
+immediately instead of after the account is gone.
 
-### C3 - Cost gates only (the control)
+## Rules the generator enforces (no preset can break them)
 
-The old score engine (fib 25 / structure 30 / EMA 25 / RSI 20), no extra indicator block, but
-with the cost gates and the TP2 + break-even exit. This is the cleanest experiment in the set:
-*what happens if we change nothing about the filters and only stop paying for trades that cannot
-pay for themselves?*
-
-### C4 - Session expansion (New York)
-
-C1 restricted to the New York session (16:01-21:59 UTC, broker offset 3h) with a stricter ATR
-gate (1.2 USD) and a 5 bar cooldown. Rationale: the spread is a fixed cost, so it should only be
-paid in the window where the range actually expands - the session filter is a cost filter in
-disguise, not a "trade only in London" superstition.
-
-## Coherence rules (enforced by `generate_presets.py`)
-
-1. **At most 2 hard filters per family** and **at most 5 hard filters in total.**
-2. A breakout preset never runs the anti-whipsaw penalty or the slope filter.
-3. A limit entry never runs `AX_STRUCT_REQUIRE_FRESH` and never has the market fallback enabled.
-4. One idea per preset - trend, breakout, cost control or session - never two.
-5. Every preset with the cost gates on must assume the 47 point spread, `InpMinATR >= 1.0`,
-   `InpMinSLSpreadMult >= 2.0`, `InpMinTargetSpreadMult >= 3.0` and
+1. Sizing must be `AX_SIZING_BROKER` and the risk must be **≤ 0.75%** per trade.
+2. The safety layer must be on, with a margin cap ≤ 5%, a live spread cap, a daily loss cap, a
+   trade count cap, a loss streak cap and an equity stop.
+3. The ATR gate must match the timeframe: **≥ 2.0 USD on M5, ≥ 3.0 USD on M15**.
+4. Cost gates on, 47 point spread assumed, `SL ≥ 2x spread`, `TP2 ≥ 3x spread`,
    `InpSkipTP1IfUneconomic=true`.
-6. The reference preset must keep the Pine weights, the TP1-only exit and the cost gates off.
-7. `AX_EXIT_TP1_ONLY` is rejected outside the reference preset, because the cost model shows it
-   cannot pay a 0.47 USD spread.
-8. Research presets may not keep more than 15 points of weight on Fibonacci or on structure.
+5. `AX_EXIT_TP1_ONLY` anywhere except the reference is rejected by the generator.
+6. Fibonacci and structure may not carry more than 15 points of weight each if the preset is a
+   research preset (the evidence for them is the weakest of all blocks).
+7. At most 2 hard filters per family and 5 in total, the trend filter must stay above the chart
+   timeframe, and stop-entry presets may not run the anti-whipsaw penalty.
 
-`generate_presets.py` refuses to write a preset that breaks a rule, so everything in this folder
-is internally consistent. Run `python3 generate_presets.py` after changing EA inputs.
+## Regenerating the files
 
-## How to compare the presets (the part that actually decides)
+```bash
+python3 generate_presets.py     # parses the EA inputs, validates every rule, writes the .set files
+```
 
-1. Same symbol, same period, **Every tick** with real M1 history, spread fixed at 47 points.
-2. Run 00 first, then C3, then C1, C2, C4 - in that order, so every step has a clean control.
-3. Judge with: trade count, profit factor, break-even win rate (as in the tables above), max
-   drawdown, and the **average win / average loss** ratio. Ignore the shape of the curve on one week.
-4. If a preset produces fewer than ~30 trades on the test period, the result is noise - extend
-   the period before drawing conclusions.
-5. Swap one thing at a time afterwards: the entry mode (`STOP` for C2), the exit multiplier
-   `InpTP2Multiplier` (1.5 -> 2.0), or the ATR gate. The presets are starting points, not a
-   finished optimisation.
-
-## What is deliberately NOT in the presets
-
-- Fibonacci levels and VWAP as **standalone** rules. The Fibonacci study (three markets) found the
-  bounce probability on Fib zones statistically indistinguishable from non-Fib zones, and the
-  VWAP evidence is institutional/industry level only. Both stay in the EA as adjustable inputs and
-  are usable as score components, but no preset requires them.
-- The fixed spread cap `InpMaxSpreadPoints` is left at 0 in the research presets, because the cost
-  gates work with the fixed 47 point assumption instead. Set a cap on a live account if the broker
-  widens the spread.
-- Anything based on visual or display logic - out of scope by request.
+The script removes stale `.set` files that are no longer in `PRESETS`, so the folder always matches
+the code in this folder.
 
 ## Notes and caveats
 
-- The presets are **starting points, not optimised settings**, and the cost model uses
-  equilibrium arithmetic (break-even win rates), not a backtest on your broker's history. The
-  strategy tester on your own data is the final judge.
-- `InpFixedSpreadPoints=47` is the *assumed* spread for the gates. Live orders still execute at the
-  broker spread; set `InpFixedSpreadPoints=0` to let the gates use the live spread instead.
-- `AX_EXIT_TP2_BE` moves the stop to the break-even price (`InpBEPlusPoints` above the entry) once
-  the TP1 distance is reached, so the whole position runs to TP2. If you prefer a partial close,
-  use `AX_EXIT_SPLIT_BE` - but note that its TP1 leg is exactly what the cost model calls
-  unprofitable.
-- Presets use a fixed broker offset (`InpBrokerGMTOffsetHrs=3`) for the session filter; a fixed
-  offset does not follow daylight saving time. Set `InpUseManualGMTOffset=false` to use `TimeGMT()`.
-- No MetaTrader compiler exists in the repository environment, so the EA is shipped as source:
-  compile it once in MetaEditor (F7) and check the Experts log.
+- These are **hypotheses with a cost model behind them, not validated edges**. The only proof is a
+  clean backtest on your data with good history quality (99%) and a demo month afterwards.
+- The spread gates assume 47 points. Set `InpFixedSpreadPoints=0` to let them use the live spread,
+  or keep 47 and rely on `InpMaxSpreadPoints=60` as the live guard.
+- Session presets use a fixed broker offset (`InpBrokerGMTOffsetHrs=3`); a fixed offset does not
+  follow daylight saving time. Set `InpUseManualGMTOffset=false` to use `TimeGMT()`.
+- No MetaTrader compiler exists in this repository environment: compile the EA once in MetaEditor
+  (F7) and check the Experts log for the contract and sizing lines.

@@ -196,6 +196,16 @@ input double             InpMinSLSpreadMult     = 2.0;       // [RESEARCH] Requi
 input double             InpMinTargetSpreadMult = 3.0;       // [RESEARCH] Require TP >= this x spread (0 = off)
 input bool               InpSkipTP1IfUneconomic = true;      // [RESEARCH] Skip the TP1 exit when it is smaller than the TP requirement
 
+//--- Account safety limits (hard guards, they sit above every filter)
+input bool               InpUseSafetyLimits      = true;  // [SAFETY] Enable the account level guards
+input double             InpRiskPercentCap       = 2.0;   // [SAFETY] Hard cap on the risk % per trade (0 = off)
+input double             InpMaxMarginPercent     = 10.0;  // [SAFETY] Max % of equity used as margin per trade (0 = off)
+input int                InpMaxTradesPerDay      = 0;     // [SAFETY] Max entries per day (0 = off)
+input double             InpMaxDailyLossPercent  = 0.0;   // [SAFETY] Stop for the day after this loss % of the day start equity (0 = off)
+input int                InpMaxConsecutiveLosses = 0;     // [SAFETY] Stop for the day after N losing trades in a row (0 = off)
+input double             InpEquityStopPercent    = 0.0;   // [SAFETY] Close and halt trading after this equity drop % (needs a reload to reset, 0 = off)
+input bool               InpCloseOnEquityStop    = true;  // [SAFETY] Close the open position when the equity stop fires
+
 //--- Score engine -----------------------------------------------------
 input double             InpWeightFib           = 10;        // [RESEARCH] Score weight: Fibonacci (Pine used 25)
 input double             InpWeightRSI           = 20;        // Score weight: RSI (Pine 20)
@@ -355,6 +365,15 @@ bool     g_tp1Done           = false;
 datetime g_pendingBarTime    = 0;
 ENUM_AX_EXIT g_effExit       = AX_EXIT_SPLIT_BE;  // exit mode actually used for this trade
 double   g_beTrigger         = 0.0;               // price that moves the stop to break-even (0 = off)
+
+//--- account safety state -------------------------------------------------
+int      g_safetyDay        = -1;    // day of year of the counters below
+int      g_tradesToday      = 0;     // entries taken today
+int      g_lossStreak       = 0;     // consecutive losing trades today
+double   g_dayStartEquity   = 0.0;   // equity at the start of the day
+bool     g_dayHalted        = false; // no more trades today
+bool     g_haltLogged       = false;
+bool     g_hardHalted       = false; // equity stop: needs an EA reload
 
 //+------------------------------------------------------------------+
 //| Small helpers                                                    |
@@ -1192,6 +1211,14 @@ double ComputeLots(const double riskDist, const int dir)
    double balance = AccountBalance();
    double riskPct = InpRiskPercent;
 
+   //--- hard cap on the risk percentage (the presets stay well below it) --
+   if(InpUseSafetyLimits && InpRiskPercentCap > 0.0 && riskPct > InpRiskPercentCap)
+   {
+      LogMsg("SAFETY: risk " + DoubleToString(riskPct, 2) + "% capped to " +
+             DoubleToString(InpRiskPercentCap, 2) + "%");
+      riskPct = InpRiskPercentCap;
+   }
+
    //--- optional risk boost on strong signals --------------------------
    if(InpStrongMode == AX_STRONG_BOOST_RISK)
    {
@@ -1224,6 +1251,36 @@ double ComputeLots(const double riskDist, const int dir)
    if(perUnit <= 0.0) return(NormalizeLot(InpFixedLot));
 
    double lots = riskMoney / (riskDist * perUnit);
+
+   //--- margin cap: never take more than InpMaxMarginPercent of the equity -
+   double stepC  = MarketInfo(_Symbol, MODE_LOTSTEP);
+   double minLotC = MarketInfo(_Symbol, MODE_MINLOT);
+   if(stepC   <= 0.0) stepC   = 0.01;
+   if(minLotC <= 0.0) minLotC = stepC;
+
+   if(InpUseSafetyLimits && InpMaxMarginPercent > 0.0)
+   {
+      double marginPerLot = MarketInfo(_Symbol, MODE_MARGINREQUIRED);
+      double equity       = AccountEquity();
+      if(marginPerLot > 0.0 && equity > 0.0)
+      {
+         double maxLots = equity * InpMaxMarginPercent / 100.0 / marginPerLot;
+         if(lots > maxLots)
+         {
+            lots = MathFloor(maxLots / stepC + 0.0000001) * stepC;
+            if(lots < minLotC)
+            {
+               LogMsg("SAFETY: trade rejected - the margin cap of " +
+                      DoubleToString(InpMaxMarginPercent, 1) + "% of equity (" +
+                      DoubleToString(equity * InpMaxMarginPercent / 100.0, 2) + ") is below one lot");
+               return(0.0);
+            }
+            LogMsg("SAFETY: position size reduced to " + DoubleToString(lots, LotDigits()) +
+                   " lots by the margin cap (" + DoubleToString(InpMaxMarginPercent, 1) + "% of equity)");
+         }
+      }
+   }
+
    lots = NormalizeLot(lots);
 
    //--- margin safety ---------------------------------------------------
@@ -1242,7 +1299,15 @@ double ComputeLots(const double riskDist, const int dir)
       lots = NormalizeDouble(lots - step, LotDigits());
       guard++;
    }
-   if(lots < minLot) lots = minLot;
+   if(lots < minLot)
+   {
+      if(InpUseSafetyLimits)
+      {
+         LogMsg("SAFETY: trade rejected - the free margin does not allow the minimum lot");
+         return(0.0);
+      }
+      lots = minLot;
+   }
    return(lots);
 }
 
@@ -1256,6 +1321,93 @@ double MinStopDistance()
    double d = MathMax(stopLevel, freeze);
    if(d < 3.0 * Point) d = 3.0 * Point;
    return(d);
+}
+
+//--- account currency value of a 1.0 price move per lot ------------------
+double AccountPerUnit()
+{
+   if(InpSizingMode == AX_SIZING_PINE_FIXED || InpSizingMode == AX_SIZING_MANUAL_VALUE)
+      return(InpPineLotValue);
+
+   double tickValue = MarketInfo(_Symbol, MODE_TICKVALUE);
+   double tickSize  = MarketInfo(_Symbol, MODE_TICKSIZE);
+   if(tickSize <= 0.0) tickSize = Point;
+   if(tickValue <= 0.0 || tickSize <= 0.0) return(0.0);
+   return(tickValue / tickSize);
+}
+
+//--- daily counters ------------------------------------------------------
+void UpdateDailyState()
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   if(g_safetyDay == dt.day_of_year) return;
+
+   g_safetyDay      = dt.day_of_year;
+   g_tradesToday    = 0;
+   g_lossStreak     = 0;
+   g_dayHalted      = false;
+   g_haltLogged     = false;
+   g_dayStartEquity = (AccountEquity() > 0.0) ? AccountEquity() : AccountBalance();
+   LogMsg("New trading day: equity at day start " + DoubleToString(g_dayStartEquity, 2));
+}
+
+//--- profit of a closed trade (history lookup) ---------------------------
+double ClosedTradeProfit(const int ticket)
+{
+   if(OrderSelect(ticket, SELECT_BY_TICKET))
+      return(OrderProfit() + OrderSwap() + OrderCommission());
+
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(OrderTicket() != ticket) continue;
+      return(OrderProfit() + OrderSwap() + OrderCommission());
+   }
+   return(0.0);
+}
+
+//--- the guards that sit above every filter ------------------------------
+bool SafetyAllowsTrading()
+{
+   if(!InpUseSafetyLimits) return(true);
+   if(g_hardHalted)        return(false);
+   if(g_dayHalted)         return(false);
+
+   double equity = (AccountEquity() > 0.0) ? AccountEquity() : AccountBalance();
+   double ref    = (g_dayStartEquity > 0.0) ? g_dayStartEquity : equity;
+   double dropPct = (ref > 0.0) ? (ref - equity) / ref * 100.0 : 0.0;
+
+   //--- permanent circuit breaker ---------------------------------------
+   if(InpEquityStopPercent > 0.0 && dropPct >= InpEquityStopPercent)
+   {
+      g_hardHalted = true;
+      g_dayHalted  = true;
+      LogMsg("EQUITY STOP: equity dropped " + DoubleToString(dropPct, 2) +
+             "% from the day start. Trading is halted until the EA is reloaded.");
+      return(false);
+   }
+
+   //--- stop for the rest of the day -------------------------------------
+   string reason = "";
+   if(InpMaxDailyLossPercent > 0.0 && dropPct >= InpMaxDailyLossPercent)
+      reason = "daily loss limit reached (" + DoubleToString(dropPct, 2) + "%)";
+   else if(InpMaxConsecutiveLosses > 0 && g_lossStreak >= InpMaxConsecutiveLosses)
+      reason = "consecutive losses: " + IntegerToString(g_lossStreak);
+   else if(InpMaxTradesPerDay > 0 && g_tradesToday >= InpMaxTradesPerDay)
+      reason = "daily trade limit reached (" + IntegerToString(g_tradesToday) + ")";
+
+   if(reason != "")
+   {
+      g_dayHalted = true;
+      if(!g_haltLogged)
+      {
+         g_haltLogged = true;
+         LogMsg("SAFETY: no more entries today - " + reason);
+      }
+      return(false);
+   }
+   return(true);
 }
 
 bool SpreadOK()
@@ -1416,6 +1568,24 @@ void OnTradeClosed()
    int closedDir    = g_tradeDir;
    if(closedTicket > 0) DeleteTradeState(closedTicket);
 
+   double closedProfit = (closedTicket > 0) ? ClosedTradeProfit(closedTicket) : 0.0;
+   if(closedTicket > 0)
+   {
+      if(closedProfit < 0.0)
+      {
+         g_lossStreak++;
+         LogMsg("Closed #" + IntegerToString(closedTicket) + " with " +
+                DoubleToString(closedProfit, 2) + " | consecutive losses today: " +
+                IntegerToString(g_lossStreak));
+      }
+      else
+      {
+         if(g_lossStreak > 0)
+            LogMsg("Losing streak of " + IntegerToString(g_lossStreak) + " ended.");
+         g_lossStreak = 0;
+      }
+   }
+
    LogMsg("Position #" + IntegerToString(closedTicket) + " is closed. Balance=" +
           DoubleToString(AccountBalance(), 2));
 
@@ -1488,6 +1658,21 @@ bool MoveStopToBreakEven(const int dir, const double bid, const double ask, cons
 //+------------------------------------------------------------------+
 void ManageOpenPosition()
 {
+   //--- circuit breaker: close everything when the equity stop fired -------
+   if(g_hardHalted && InpCloseOnEquityStop)
+   {
+      int pos = FindMyPosition();
+      if(pos > 0 && OrderSelect(pos, SELECT_BY_TICKET))
+      {
+         LogMsg("Equity stop: closing position #" + IntegerToString(pos));
+         ClosePosition(pos, OrderLots());
+      }
+      int pend = FindMyPending();
+      if(pend > 0 && OrderSelect(pend, SELECT_BY_TICKET))
+         OrderDelete(pend);
+      return;
+   }
+
    if(g_ticket <= 0) return;
    if(!OrderSelect(g_ticket, SELECT_BY_TICKET)) { OnTradeClosed(); return; }
    if(OrderCloseTime() != 0 || (OrderType() != OP_BUY && OrderType() != OP_SELL))
@@ -1790,6 +1975,11 @@ void ExecuteSignal(const int dir, const double refEntry)
       g_beTrigger = 0.0;
 
    double lots    = ComputeLots(riskDist, dir);
+   if(lots <= 0.0)
+   {
+      LogMsg("Signal skipped: the position size was rejected by the safety limits");
+      return;
+   }
    double orderTP = 0.0;
    if(g_effExit == AX_EXIT_TP1_ONLY)      orderTP = tp1Ref;
    else if(g_effExit == AX_EXIT_TP2_ONLY) orderTP = tp2Ref;
@@ -1803,6 +1993,10 @@ void ExecuteSignal(const int dir, const double refEntry)
           " TP1=" + DoubleToString(tp1Ref, Digits) +
           " TP2=" + DoubleToString(tp2Ref, Digits) +
           " lots=" + DoubleToString(lots, 2) +
+          " risk=" + DoubleToString(lots * riskDist * AccountPerUnit(), 2) + " (" +
+          DoubleToString((AccountBalance() > 0.0)
+                         ? lots * riskDist * AccountPerUnit() / AccountBalance() * 100.0 : 0.0, 2) +
+          "% of balance)" +
           " ATR=" + DoubleToString(g_ind.atr, Digits) +
           " ADX=" + DoubleToString(g_ind.adx, 1) + "(" + g_ind.adxLevelName + ")" +
           " spread=" + DoubleToString(spread, Digits) +
@@ -1830,6 +2024,7 @@ void ExecuteSignal(const int dir, const double refEntry)
       int tk = 0;
       if(!SendMarketOrder(dir, lots, slRef, orderTP, cmt, tk)) return;
 
+      g_tradesToday++;
       SaveTradeState(tk, riskDist, rr, tp1Ref, tp2Ref, 0);
       AdoptPosition(tk);
       return;
@@ -1865,6 +2060,7 @@ void ExecuteSignal(const int dir, const double refEntry)
 
       int tk = 0;
       if(!SendMarketOrder(dir, lots, slRef, orderTP, cmt, tk)) return;
+      g_tradesToday++;
       SaveTradeState(tk, riskDist, rr, tp1Ref, tp2Ref, 0);
       AdoptPosition(tk);
       return;
@@ -1875,6 +2071,7 @@ void ExecuteSignal(const int dir, const double refEntry)
       return;
 
    g_pendingBarTime = iTime(_Symbol, _Period, 0);
+   g_tradesToday++;
    SaveTradeState(ticket, riskDist, rr, tp1Ref, tp2Ref, 0);
    LogMsg("Pending #" + IntegerToString(ticket) + " placed at " + DoubleToString(refEntry, Digits) +
           " (valid " + IntegerToString(InpPendingExpiryBars) + " bar(s))");
@@ -1892,8 +2089,14 @@ void OnNewBarUpdate()
       if(pos > 0) AdoptPosition(pos);
    }
 
+   //--- account safety state (refreshed once per day) --------------------
+   UpdateDailyState();
+
    //--- only one position / pending order at a time ----------------------
    if(HasPositionOrPending()) return;
+
+   //--- account level guards (they listen to no filter) ------------------
+   if(!SafetyAllowsTrading()) return;
 
    if(!SpreadOK())
    {
@@ -2029,6 +2232,27 @@ int OnInit()
          Print("[AlgoX] NOTE: the 47 point spread is the research assumption for XAUUSD M1 " +
                "(0.47 USD on a 2 digit quote).");
    }
+   //--- contract size / sizing sanity (the broker contract is not the
+   //--- indicator's assumed lot value - this is what blew up the first round)
+   double perUnit = AccountPerUnit();
+   Print("[AlgoX] Contract check | 1.0 price move per lot = ", DoubleToString(perUnit, 2), " ",
+         AccountCurrency(), " | tick value=", DoubleToString(MarketInfo(_Symbol, MODE_TICKVALUE), 2),
+         " tick size=", DoubleToString(MarketInfo(_Symbol, MODE_TICKSIZE), Digits),
+         " | min lot=", DoubleToString(MarketInfo(_Symbol, MODE_MINLOT), 2),
+         " step=", DoubleToString(MarketInfo(_Symbol, MODE_LOTSTEP), 2),
+         " | margin per lot=", DoubleToString(MarketInfo(_Symbol, MODE_MARGINREQUIRED), 2));
+   if(InpSizingMode == AX_SIZING_PINE_FIXED || InpSizingMode == AX_SIZING_MANUAL_VALUE)
+      Print("[AlgoX] WARNING: fixed sizing uses the manual value " +
+            DoubleToString(InpPineLotValue, 2) + " and the fixed balance " +
+            DoubleToString(InpPineBalance, 2) + ", while the broker's real value is " +
+            DoubleToString(perUnit, 2) + " per 1.0 move per lot. The effective risk can be " +
+            "several times larger than intended - use AX_SIZING_BROKER on a live account.");
+   else
+      Print("[AlgoX] Sizing: " + DoubleToString(InpRiskPercent, 2) +
+            "% of the real balance per trade | margin cap " +
+            DoubleToString(InpMaxMarginPercent, 1) + "% of equity | risk cap " +
+            DoubleToString(InpRiskPercentCap, 2) + "%");
+
    if(InpExitMode == AX_EXIT_TP2_BE)
       Print("[AlgoX] NOTE: AX_EXIT_TP2_BE closes the whole position at TP2 and moves the stop " +
             "to break-even once the TP1 distance is reached.");

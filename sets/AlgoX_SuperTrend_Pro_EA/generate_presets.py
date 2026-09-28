@@ -158,16 +158,26 @@ def hard_filters(preset):
     return hard
 
 
+ATR_GATE_MIN = {"M1": 1.0, "M5": 2.0, "M15": 3.0}
+
+
 def validate_coherence(preset, inputs):
-    """Raise ValueError when a preset breaks the research / coherence rules."""
+    """Raise ValueError when a preset breaks the research / safety rules."""
     values = dict(BASE)
     values.update(preset["overrides"])
     problems = []
     is_reference = (preset.get("family") == "reference")
     pine_weights = (preset.get("weights") == "pine")
+    tf = preset.get("tf", "M5")
+
+    def num(name):
+        return float(values.get(name, "0"))
+
+    def flag(name):
+        return str(values.get(name, "false")).lower() == "true"
 
     # --- general coherence: no filter family measured twice ---------------
-    hard = hard_filters(preset)
+    hard = [] if is_reference else hard_filters(preset)
     per_family = {}
     for family, label in hard:
         per_family.setdefault(family, []).append(label)
@@ -178,7 +188,7 @@ def validate_coherence(preset, inputs):
         problems.append("more than %d hard filters in total: %d" % (MAX_HARD_TOTAL, len(hard)))
 
     entry = values.get("InpEntryMode", "AX_ENTRY_MARKET")
-    anti_whipsaw = str(values.get("InpUseAntiWhipsaw", "false")).lower() == "true"
+    anti_whipsaw = flag("InpUseAntiWhipsaw")
     struct = values.get("InpStructMode", "AX_STRUCT_OFF")
     exit_mode = values.get("InpExitMode", "AX_EXIT_SPLIT_BE")
     strong = values.get("InpStrongMode", "AX_STRONG_OFF")
@@ -187,55 +197,85 @@ def validate_coherence(preset, inputs):
         problems.append("AX_ENTRY_STOP combined with InpUseAntiWhipsaw=true (they fight each other)")
     if entry == "AX_ENTRY_LIMIT" and struct == "AX_STRUCT_REQUIRE_FRESH":
         problems.append("AX_ENTRY_LIMIT combined with AX_STRUCT_REQUIRE_FRESH (contradiction)")
-    if entry == "AX_ENTRY_LIMIT" and str(values.get("InpPendingFallbackMkt", "true")).lower() == "true":
+    if entry == "AX_ENTRY_LIMIT" and flag("InpPendingFallbackMkt"):
         problems.append("AX_ENTRY_LIMIT with InpPendingFallbackMkt=true (pullback preset turns into a market preset)")
-    if exit_mode == "AX_EXIT_TP2_ONLY" and str(values.get("InpKeepTP2OnOrder", "true")).lower() == "false":
+    if exit_mode == "AX_EXIT_TP2_ONLY" and not flag("InpKeepTP2OnOrder"):
         problems.append("AX_EXIT_TP2_ONLY without a server side TP2")
     other_hard = [item for item in hard if item[0] != "quality"]
     if strong == "AX_STRONG_ONLY" and len(other_hard) > 4:
         problems.append("AX_STRONG_ONLY with more than 4 hard filters (practically no trades)")
-    if str(values.get("InpUsePineCancelRule", "false")).lower() == "true":
+    if flag("InpUsePineCancelRule"):
         problems.append("InpUsePineCancelRule is gold specific, keep it out of the presets")
 
-    # --- cost gates (the 0.47 USD spread research) -------------------------
-    def num(name):
-        return float(values.get(name, "0"))
+    # --- the safety layer is obligatory in every preset --------------------
+    if not flag("InpUseSafetyLimits"):
+        problems.append("every preset must keep InpUseSafetyLimits=true")
+    if values.get("InpSizingMode") != "AX_SIZING_BROKER":
+        problems.append("presets must size from the real account (AX_SIZING_BROKER), "
+                        "the fixed modes risk 10x more than intended on a 100 oz contract")
+    if num("InpRiskPercent") > 0.75:
+        problems.append("risk per trade must stay at or below 0.75% (got %s)" % values.get("InpRiskPercent"))
+    if num("InpRiskPercentCap") > 1.0:
+        problems.append("InpRiskPercentCap must be 1.0% or lower")
+    if num("InpMaxMarginPercent") > 5.0:
+        problems.append("InpMaxMarginPercent must be 5% or lower")
+    if num("InpMaxSpreadPoints") <= 0.0:
+        problems.append("every preset needs a live spread cap (InpMaxSpreadPoints)")
+    if num("InpMaxTradesPerDay") <= 0:
+        problems.append("every preset needs InpMaxTradesPerDay")
+    if num("InpMaxDailyLossPercent") <= 0.0:
+        problems.append("every preset needs InpMaxDailyLossPercent")
+    if num("InpMaxConsecutiveLosses") <= 0:
+        problems.append("every preset needs InpMaxConsecutiveLosses")
+    if num("InpEquityStopPercent") <= 0.0:
+        problems.append("every preset needs InpEquityStopPercent")
+    if not flag("InpCloseOnEquityStop"):
+        problems.append("the equity stop should close the open position")
 
-    if is_reference:
-        if str(values.get("InpUseCostFilters", "true")).lower() != "false":
-            problems.append("the reference preset must keep InpUseCostFilters=false")
-        if not pine_weights:
-            problems.append("the reference preset must use the original Pine weights")
-        if exit_mode != "AX_EXIT_TP1_ONLY":
-            problems.append("the reference preset must keep the original TP1-only exit")
+    # --- timeframe calibration --------------------------------------------
+    if tf not in ATR_GATE_MIN:
+        problems.append("unknown timeframe tag: %s" % tf)
     else:
-        if str(values.get("InpUseCostFilters", "true")).lower() != "true":
-            problems.append("research presets must enable InpUseCostFilters")
-        if num("InpFixedSpreadPoints") != 47:
-            problems.append("research presets must assume the 47 point spread")
-        if num("InpMinATR") < 1.0:
-            problems.append("research presets need InpMinATR >= 1.0 (cost/risk ratio)")
-        if num("InpMinSLSpreadMult") < 2.0:
-            problems.append("research presets need InpMinSLSpreadMult >= 2.0")
-        if num("InpMinTargetSpreadMult") < 3.0:
-            problems.append("research presets need InpMinTargetSpreadMult >= 3.0")
-        if str(values.get("InpSkipTP1IfUneconomic", "false")).lower() != "true":
-            problems.append("research presets must keep InpSkipTP1IfUneconomic=true")
-        if values.get("InpMinADXRegime") in (None, "AX_REGIME_ANY"):
-            problems.append("research presets must require at least the medium ADX regime")
-        if exit_mode == "AX_EXIT_TP1_ONLY":
-            problems.append("the TP1-only exit is structurally unprofitable with a 0.47 spread")
-        if exit_mode == "AX_EXIT_SPLIT_BE" and num("InpTP1Portion") < 0.5:
-            problems.append("a partial TP1 below 50% leaves too much size for a small target")
-        if not pine_weights:
-            if num("InpWeightFib") > 15 or num("InpWeightStruct") > 15:
-                problems.append("research presets must not keep the 55% weight on fib + structure")
-            weight_sum = sum(num(n) for n in ("InpWeightFib", "InpWeightRSI", "InpWeightEMA",
-                                              "InpWeightStruct", "InpWeightMACD", "InpWeightVolume"))
-            if weight_sum <= 0:
-                problems.append("score weights must not all be zero")
-        if values.get("InpTrendTF") == "AX_TF_5":
-            problems.append("the trend filter timeframe must stay above the M1 chart")
+        minimum = ATR_GATE_MIN[tf]
+        if is_reference:
+            if num("InpMinATR") > minimum:
+                problems.append("the reference preset should not gate on ATR (it measures the raw signal)")
+        else:
+            if not flag("InpUseCostFilters"):
+                problems.append("research presets must enable InpUseCostFilters")
+            if num("InpFixedSpreadPoints") != 47:
+                problems.append("research presets must assume the 47 point spread")
+            if num("InpMinATR") < minimum:
+                problems.append("%s presets need InpMinATR >= %.1f" % (tf, minimum))
+            if num("InpMinSLSpreadMult") < 2.0:
+                problems.append("research presets need InpMinSLSpreadMult >= 2.0")
+            if num("InpMinTargetSpreadMult") < 3.0:
+                problems.append("research presets need InpMinTargetSpreadMult >= 3.0")
+            if not flag("InpSkipTP1IfUneconomic"):
+                problems.append("research presets must keep InpSkipTP1IfUneconomic=true")
+            if values.get("InpMinADXRegime") in (None, "AX_REGIME_ANY"):
+                problems.append("research presets must require at least the medium ADX regime")
+            if exit_mode == "AX_EXIT_TP1_ONLY":
+                problems.append("the TP1-only exit is structurally unprofitable with a 0.47 spread")
+            if exit_mode == "AX_EXIT_SPLIT_BE" and num("InpTP1Portion") < 0.5:
+                problems.append("a partial TP1 below 50% leaves too much size for a small target")
+            if not pine_weights:
+                if num("InpWeightFib") > 15 or num("InpWeightStruct") > 15:
+                    problems.append("research presets must not keep the 55% weight on fib + structure")
+                weight_sum = sum(num(n) for n in ("InpWeightFib", "InpWeightRSI", "InpWeightEMA",
+                                                  "InpWeightStruct", "InpWeightMACD", "InpWeightVolume"))
+                if weight_sum <= 0:
+                    problems.append("score weights must not all be zero")
+
+    # --- trend filter must stay above the chart timeframe ------------------
+    tf_minutes = {"AX_TF_1": 1, "AX_TF_5": 5, "AX_TF_15": 15, "AX_TF_30": 30, "AX_TF_60": 60, "AX_TF_240": 240}
+    chart_minutes = {"M1": 1, "M5": 5, "M15": 15}[tf]
+    trend_tf = values.get("InpTrendTF")
+    trend_mode = values.get("InpTrendFilterMode", "AX_MODE_OFF")
+    if trend_mode not in ("AX_MODE_OFF",) and trend_tf in tf_minutes:
+        if tf_minutes[trend_tf] <= chart_minutes:
+            problems.append("the trend filter timeframe (%s) must be above the chart timeframe (%s)"
+                            % (trend_tf, tf))
 
     known = {item["name"] for item in inputs}
     unknown = sorted(set(values) - known)
@@ -251,24 +291,44 @@ def validate_coherence(preset, inputs):
 
 
 
-# 3. Execution base and the research presets
+# 3. Execution base and the M5 / M15 research presets
 # --------------------------------------------------------------------------
-# The base is identical in every preset so that a comparison measures the
-# filter combination and nothing else. It encodes the research conclusions for
-# XAUUSD M1 with a fixed 0.47 USD spread (see docs/AlgoX_M1_Filter_Research_fa.md):
-#   - target the TP2/runner, never the small TP1 (the spread eats it),
-#   - require a minimum ATR and a strong ADX regime,
-#   - require the geometry to be at least a few times the spread,
-#   - score the documented indicators (MACD, RSI, volume) and down-weight
-#     Fibonacci and the pivot structure break.
+# Post mortem of the first live round (XAUUSD M1, 0.47 spread, 500 USD test
+# account, four presets in parallel):
+#   C1 -473 USD | PF 0.60 | 157 trades | 31.2% wins
+#   C2 -347 USD | PF 0.87 | 528 trades | 38.3% wins   <- best of the four
+#   C3 -463 USD | PF 0.64 | 256 trades | 34.0% wins
+#   C4 -461 USD | PF 0.64 | 235 trades | 33.6% wins
+# Every preset needed a 41.5-44.6% win rate to break even and delivered
+# 31-38%; on M1 the spread is ~30-50% of the risk distance, and the fixed
+# "(PINE) lot value" of the indicator assumed a 10 oz contract while the
+# broker trades 100 oz - the effective risk per trade was ~10x the intended
+# 1.5%, i.e. ~2.7% of a 500 USD account per trade, times four presets.
+#
+# This base therefore enforces, in every file:
+#   - sizing from the REAL account (AX_SIZING_BROKER), 0.5% risk per trade,
+#   - the account safety layer (margin cap, daily loss, trade count, loss
+#     streak, equity stop) - it cannot be switched off by a preset,
+#   - a live spread cap, so the 47 point assumption is never exceeded in
+#     reality,
+#   - the cost gates and the rebalanced score weights of the research,
+#   - no TP1-only exit anywhere (it cannot pay a 0.47 spread).
+# Only the ATR gate, the cooldown and the filters differ per timeframe.
 BASE = {
-    # deterministic sizing (100 USD balance, 1.5% risk, 10 USD per 1.0 move per lot)
-    # -> keeps the presets comparable with the original indicator numbers.
-    # Use AX_SIZING_BROKER on a live account.
-    "InpSizingMode": "AX_SIZING_PINE_FIXED",
+    # real account sizing: 0.5% of the equity per trade, margin capped
+    "InpSizingMode": "AX_SIZING_BROKER",
+    "InpRiskPercent": "0.5",
     "InpPineBalance": "100",
-    "InpRiskPercent": "1.5",
     "InpPineLotValue": "10",
+    # account safety layer (see the [SAFETY] inputs of the EA)
+    "InpUseSafetyLimits": "true",
+    "InpRiskPercentCap": "1.0",
+    "InpMaxMarginPercent": "5.0",
+    "InpMaxTradesPerDay": "3",
+    "InpMaxDailyLossPercent": "3.0",
+    "InpMaxConsecutiveLosses": "4",
+    "InpEquityStopPercent": "20.0",
+    "InpCloseOnEquityStop": "true",
     # execution base
     "InpEntryMode": "AX_ENTRY_MARKET",
     "InpSLAnchor": "AX_ANCHOR_RECENTER",
@@ -276,11 +336,11 @@ BASE = {
     "InpKeepTP2OnOrder": "true",
     "InpMoveToBEAtTP1": "true",
     "InpOneSignalPerMove": "true",
-    "InpCooldownBars": "10",
+    "InpMaxSpreadPoints": "60",
     # cost gates (the 47 cent spread)
     "InpUseCostFilters": "true",
     "InpFixedSpreadPoints": "47",
-    "InpMinATR": "1.0",
+    "InpMinATR": "2.0",
     "InpMinADXRegime": "AX_REGIME_STRONG",
     "InpMinSLSpreadMult": "2.0",
     "InpMinTargetSpreadMult": "3.0",
@@ -298,18 +358,23 @@ BASE = {
 PRESETS = [
     {
         "file": "00_Pine_Baseline",
-        "title": "Reference: the indicator itself, no cost gates",
+        "title": "Reference: the raw indicator signal",
         "family": "reference",
         "weights": "pine",
+        "tf": "M5",
         "theme": (
-            "Faithful copy of the TradingView indicator: original score weights (fib 25, "
-            "structure 30, EMA 25, RSI 20), no MACD and no volume scoring, the original TP1 "
-            "exit with the reference SL/TP and no cost gates. Only kept as the comparison "
-            "baseline - the research shows this geometry cannot survive a 0.47 USD spread."
+            "The raw signal: original Pine weights (fib 25, structure 30, EMA 25, RSI 20), no MACD "
+            "and no volume scoring, the original reference SL/TP and the original TP1 exit, with the "
+            "cost gates switched off - but with the same account sizing and the same safety layer as "
+            "every other preset, so the comparison is about the signal and not about broken sizing. "
+            "Run it twice: once with the tester spread at 47 (the real cost) and once at 0 (does the "
+            "raw signal have any edge at all?). The pair of results tells you whether the problem is "
+            "the signal or the cost."
         ),
         "overrides": {
             "InpMagicNumber": "20260100",
             "InpUseCostFilters": "false",
+            "InpMinATR": "0",
             "InpMinADXRegime": "AX_REGIME_ANY",
             "InpSkipTP1IfUneconomic": "false",
             "InpWeightFib": "25",
@@ -323,106 +388,170 @@ PRESETS = [
             "InpMoveToBEAtTP1": "false",
             "InpKeepTP2OnOrder": "false",
             "InpOneSignalPerMove": "false",
+            "InpMaxSpreadPoints": "60",
+            "InpMaxTradesPerDay": "5",
         },
     },
     {
-        "file": "C1_Trend_Momentum",
-        "title": "Trend + momentum (ADX regime, MACD, RSI, volume)",
-        "family": "trend",
-        "theme": (
-            "The documented combination: the higher timeframe trend (M15 EMA 50) is required and "
-            "the MACD histogram must agree, while RSI (55/45 levels), the intraday regime "
-            "(EMA 5/10/20) and the relative volume carry the rebalanced score weight. The trade targets TP2 with the "
-            "stop moved to break-even at the TP1 distance, and it only fires when ATR(5) is at "
-            "least 1.0 USD, ADX is strong and the geometry is at least 3x the spread - the research "
-            "thresholds for a 0.47 USD spread on gold M1."
-        ),
-        "overrides": {
-            "InpMagicNumber": "20260101",
-            "InpTrendFilterMode": "AX_MODE_REQUIRE",
-            "InpTrendTF": "AX_TF_15",
-            "InpMACDMode": "AX_MODE_REQUIRE",
-            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
-            "InpRegimeMode": "AX_MODE_SCORE",
-            "InpVolAvgMode": "AX_MODE_OFF",
-            "InpVolFilterMode": "AX_MODE_OFF",
-            "InpCooldownBars": "12",
-        },
-    },
-    {
-        "file": "C2_Expansion_Breakout",
-        "title": "Expansion breakout (fresh structure + new extremes + volume)",
+        "file": "M15_A_Breakout_Volume",
+        "title": "M15: expansion breakout with volume (the best of the first round)",
         "family": "breakout",
+        "tf": "M15",
         "theme": (
-            "The other documented combination: a fresh BOS/CHoCH structure break plus a close at "
-            "the 200-bar extreme, confirmed by relative volume (hard) and the MACD histogram "
-            "(score). Momentum is scored with the rebalanced weights, the entry is at market to "
-            "keep the entry method identical across the research presets, and the exit is TP2 "
-            "with the break-even trigger. Expansion trades only, so the anti-whipsaw penalty "
-            "stays off."
+            "The only preset of the first round whose win rate came close to its break-even "
+            "(38.3% against 41.5% needed): a fresh BOS/CHoCH structure break plus a close at the "
+            "200-bar extreme, confirmed by relative volume (hard) and the MACD histogram (score), "
+            "with the higher timeframe trend (H1) adding a bonus. Rebuilt on M15, where the spread "
+            "is only ~9% of the risk distance instead of ~40%: ATR(5) gate 3.0 USD, ADX must be "
+            "strong, geometry at least 2x (SL) and 3x (TP2) the spread, exit TP2 with the stop "
+            "moved to break-even at the TP1 distance."
         ),
         "overrides": {
-            "InpMagicNumber": "20260102",
+            "InpMagicNumber": "20260301",
+            "InpMinATR": "3.0",
+            "InpCooldownBars": "4",
             "InpStructMode": "AX_STRUCT_REQUIRE_FRESH",
             "InpRange200Mode": "AX_MODE_REQUIRE",
             "InpVolFilterMode": "AX_MODE_REQUIRE",
             "InpMACDMode": "AX_MODE_SCORE",
-            "InpWeightMACD": "20",
-            "InpCooldownBars": "5",
+            "InpTrendFilterMode": "AX_MODE_BONUS",
+            "InpTrendTF": "AX_TF_60",
+            "InpTrendEMA": "50",
+            "InpTrendBonus": "5",
+            "InpRegimeMode": "AX_MODE_SCORE",
         },
     },
     {
-        "file": "C3_CostGates_Only",
-        "title": "Control: original score engine plus the cost gates only",
-        "family": "cost",
-        "weights": "pine",
+        "file": "M15_B_Trend_Runner",
+        "title": "M15: trend + momentum with an ATR trailing runner",
+        "family": "trend",
+        "tf": "M15",
         "theme": (
-            "The control group: the original score engine (fib 25 / structure 30 / EMA 25 / RSI 20) "
-            "with no extra indicator block, but with the cost gates and the TP2 + break-even exit. "
-            "The difference against 00_Pine_Baseline isolates how much of the improvement comes "
-            "from the geometry alone (target size, ATR and ADX gates) instead of the filters."
+            "The trend continuation idea, kept from C1 but slimmed to two hard filters: the H1 "
+            "trend must agree and the MACD histogram must agree, while the 55/45 RSI levels and the "
+            "intraday regime add score. The exit is the runner variant: the stop moves to break-even "
+            "at the TP1 distance and then trails 2x ATR, so a trend day is not cut by a fixed "
+            "target - the first round showed that fixed targets smaller than 4-5x the spread cannot "
+            "pay for the cost. ATR(5) gate 3.0 USD."
         ),
         "overrides": {
-            "InpMagicNumber": "20260103",
-            "InpWeightFib": "25",
-            "InpWeightRSI": "20",
-            "InpWeightEMA": "25",
-            "InpWeightStruct": "30",
-            "InpWeightMACD": "0",
-            "InpWeightVolume": "0",
-            "InpCooldownBars": "10",
+            "InpMagicNumber": "20260302",
+            "InpMinATR": "3.0",
+            "InpCooldownBars": "4",
+            "InpTrendFilterMode": "AX_MODE_REQUIRE",
+            "InpTrendTF": "AX_TF_60",
+            "InpMACDMode": "AX_MODE_REQUIRE",
+            "InpRSIMode": "AX_RSI_SCORE_LEVELS",
+            "InpRegimeMode": "AX_MODE_SCORE",
+            "InpExitMode": "AX_EXIT_TRAIL_AFTER_TP1",
+            "InpTrailMode": "AX_TRAIL_BY_ATR",
+            "InpTrailATRMult": "2.0",
+            "InpTP2Multiplier": "2.0",
         },
     },
     {
-        "file": "C4_Session_Expansion",
-        "title": "Session expansion (New York open, stricter ATR gate)",
+        "file": "M15_C_NY_Expansion",
+        "title": "M15: New York session expansion",
         "family": "session",
+        "tf": "M15",
         "theme": (
-            "C1 restricted to the New York session (16:01-21:59 UTC) with a stricter ATR gate "
-            "(1.2 USD) and a shorter cooldown, because the spread is paid in the window where "
-            "volatility actually expands. Trend (M15) and MACD are hard filters, RSI, regime and "
-            "volume score, exit is TP2 with the break-even trigger."
+            "A15_A restricted to the New York session (16:01-21:59 UTC with a 3h broker offset) "
+            "and a stricter ATR gate (3.5 USD): the spread is a fixed cost, so it is paid only in "
+            "the window where the range actually expands. Structure break, 200-bar extreme and "
+            "relative volume are hard, the H1 trend and the MACD add score."
         ),
         "overrides": {
-            "InpMagicNumber": "20260104",
+            "InpMagicNumber": "20260303",
+            "InpMinATR": "3.5",
+            "InpCooldownBars": "3",
             "InpUseSessionFilter": "true",
             "InpTradingSession": "AX_SESSION_NEWYORK",
             "InpUseManualGMTOffset": "true",
             "InpBrokerGMTOffsetHrs": "3",
-            "InpMinATR": "1.2",
+            "InpStructMode": "AX_STRUCT_REQUIRE_FRESH",
+            "InpRange200Mode": "AX_MODE_REQUIRE",
+            "InpVolFilterMode": "AX_MODE_REQUIRE",
+            "InpMACDMode": "AX_MODE_SCORE",
+            "InpTrendFilterMode": "AX_MODE_BONUS",
+            "InpTrendTF": "AX_TF_60",
+        },
+    },
+    {
+        "file": "M5_A_Breakout_Volume",
+        "title": "M5: expansion breakout with volume",
+        "family": "breakout",
+        "tf": "M5",
+        "theme": (
+            "The same hypothesis as M15_A one timeframe faster: a fresh structure break, a close at "
+            "the 200-bar extreme and relative volume above 1.2x are hard, MACD scores, the M30 trend "
+            "adds a bonus. The M5 spread share is ~13% of the risk distance (ATR gate 2.0 USD), so "
+            "the cost handicap is much smaller than on M1 - but still twice the M15 one."
+        ),
+        "overrides": {
+            "InpMagicNumber": "20260201",
+            "InpMinATR": "2.0",
+            "InpCooldownBars": "6",
+            "InpStructMode": "AX_STRUCT_REQUIRE_FRESH",
+            "InpRange200Mode": "AX_MODE_REQUIRE",
+            "InpVolFilterMode": "AX_MODE_REQUIRE",
+            "InpMACDMode": "AX_MODE_SCORE",
+            "InpTrendFilterMode": "AX_MODE_BONUS",
+            "InpTrendTF": "AX_TF_30",
+            "InpRegimeMode": "AX_MODE_SCORE",
+        },
+    },
+    {
+        "file": "M5_B_Trend_Momentum",
+        "title": "M5: trend + momentum (M30 filter)",
+        "family": "trend",
+        "tf": "M5",
+        "theme": (
+            "The trend + momentum combination on M5: the M30 trend is required, the MACD histogram "
+            "is required, the 55/45 RSI levels and the intraday regime score, and the exit is TP2 "
+            "with the break-even trigger. ATR(5) gate 2.0 USD and a 6 bar cooldown keep the trade "
+            "count and the cost drag down."
+        ),
+        "overrides": {
+            "InpMagicNumber": "20260202",
+            "InpMinATR": "2.0",
+            "InpCooldownBars": "6",
             "InpTrendFilterMode": "AX_MODE_REQUIRE",
-            "InpTrendTF": "AX_TF_15",
+            "InpTrendTF": "AX_TF_30",
             "InpMACDMode": "AX_MODE_REQUIRE",
             "InpRSIMode": "AX_RSI_SCORE_LEVELS",
             "InpRegimeMode": "AX_MODE_SCORE",
-            "InpCooldownBars": "5",
+        },
+    },
+    {
+        "file": "M5_C_NY_Expansion",
+        "title": "M5: New York session expansion",
+        "family": "session",
+        "tf": "M5",
+        "theme": (
+            "M5_A limited to the New York session with a stricter ATR gate (2.5 USD) and a 4 bar "
+            "cooldown. Fewer entries, each of them in the part of the day that actually pays for "
+            "the spread."
+        ),
+        "overrides": {
+            "InpMagicNumber": "20260203",
+            "InpMinATR": "2.5",
+            "InpCooldownBars": "4",
+            "InpUseSessionFilter": "true",
+            "InpTradingSession": "AX_SESSION_NEWYORK",
+            "InpUseManualGMTOffset": "true",
+            "InpBrokerGMTOffsetHrs": "3",
+            "InpStructMode": "AX_STRUCT_REQUIRE_FRESH",
+            "InpRange200Mode": "AX_MODE_REQUIRE",
+            "InpVolFilterMode": "AX_MODE_REQUIRE",
+            "InpMACDMode": "AX_MODE_SCORE",
+            "InpTrendFilterMode": "AX_MODE_BONUS",
+            "InpTrendTF": "AX_TF_30",
         },
     },
 ]
 
 
 
-# 4. Value formatting
 # --------------------------------------------------------------------------
 def format_value(value, var_type, enums):
     """Convert a python value / literal into the MT4 .set representation."""
