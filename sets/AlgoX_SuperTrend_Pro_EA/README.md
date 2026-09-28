@@ -76,7 +76,12 @@ All research presets target **TP2 with the stop moved to break-even at the TP1 d
 
 ## How to test (round 3 plan, in this order)
 
-**Step 0 - is the `M5_A` edge real?** Two runs, same period as round 2, everything else untouched:
+**Step -1 (five minutes):** recompile the EA in MetaEditor (the two new `[SAFETY]` inputs exist only in
+the new code) and rerun `M5_A_Breakout_Volume` exactly as in round 2 (same period, spread 47). The
+result should be the same PF ~1.11 with the same ~155 trades - if it is, the new guards changed
+nothing except the emergency paths, and the journal must show the `Contract check` line.
+
+**Step 0 - is the `M5_A` edge real?** Two more runs, same period as round 2, everything else untouched:
 
 1. `M5_A_Breakout_Volume` with the tester spread at **0**. This measures how much of the edge the
    spread eats. Round 2 was PF 1.11 *with* the 47 point spread; if the zero-spread run is ~1.3-1.4,
@@ -118,11 +123,11 @@ immediately instead of after the account is gone.
 
 ## Rules the generator enforces (no preset can break them)
 
-1. Sizing must be `AX_SIZING_BROKER` and the risk must be **≤ 0.75%** per trade.
-2. The safety layer must be on, with a margin cap ≤ 5%, a live spread cap, a daily loss cap, a
+1. Sizing must be `AX_SIZING_BROKER` and the risk must be **<= 0.75%** per trade.
+2. The safety layer must be on, with a margin cap <= 5%, a live spread cap, a daily loss cap, a
    trade count cap, a loss streak cap and an equity stop.
-3. The ATR gate must match the timeframe: **≥ 2.0 USD on M5, ≥ 3.0 USD on M15**.
-4. Cost gates on, 47 point spread assumed, `SL ≥ 2x spread`, `TP2 ≥ 3x spread`,
+3. The ATR gate must match the timeframe: **>= 2.0 USD on M5, >= 3.0 USD on M15**.
+4. Cost gates on, 47 point spread assumed, `SL >= 2x spread`, `TP2 >= 3x spread`,
    `InpSkipTP1IfUneconomic=true`.
 5. `AX_EXIT_TP1_ONLY` anywhere except the reference is rejected by the generator.
 6. Fibonacci and structure may not carry more than 15 points of weight each if the preset is a
