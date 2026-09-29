@@ -123,11 +123,18 @@ double SafeATR(int period,int shift)
    return(atr);
 }
 double NP(double price) { return(NormalizeDouble(price,_Digits)); }
-double DollarsPerPriceUnit(double lot)
+double DollarsPerPriceUnit(double lot,int direction=1)
 {
-   double tickSize=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE), tickValue=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
-   if(tickSize<=0 || tickValue<=0) return(0);
-   return(lot*tickValue/tickSize);
+   // MT5 SYMBOL_TRADE_TICK_VALUE is not reliably per-lot across all gold
+   // contract configurations. Ask the trade server/tester for actual P/L of
+   // THIS volume over exactly one price unit in the account currency.
+   MqlTick tick;
+   if(!SymbolInfoTick(_Symbol,tick)) return(0);
+   double entry=(direction>0 ? tick.ask : tick.bid), profit=0;
+   if(entry<=0 || !OrderCalcProfit(direction>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                                   _Symbol,lot,entry,entry+(direction>0 ? 1.0 : -1.0),profit)) return(0);
+   if(profit<=0 || !MathIsValidNumber(profit)) return(0);
+   return(profit);
 }
 double NormalizeLot(double lot)
 {
@@ -277,7 +284,7 @@ void ManageOneOrder(ulong ticket)
    double stopLevel=SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL)*_Point;
    if(stopLevel<=0) stopLevel=20*_Point;
    double entry=PositionGetDouble(POSITION_PRICE_OPEN), curSL=PositionGetDouble(POSITION_SL), newSL=curSL;
-   double upu=DollarsPerPriceUnit(PositionGetDouble(POSITION_VOLUME));
+   double upu=DollarsPerPriceUnit(PositionGetDouble(POSITION_VOLUME),PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY ? 1 : -1);
    if(upu<=0) return;
    ulong positionId=(ulong)PositionGetInteger(POSITION_IDENTIFIER);
    bool beApplied=ListContains(g_beTickets,g_beCount,positionId);
@@ -546,8 +553,8 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
       int spr=(int)SymbolInfoInteger(_Symbol,SYMBOL_SPREAD);
       if(spr>MaxSpreadPoints) { Print("[!] Spread ",spr," > max ",MaxSpreadPoints); return(false); }
    }
-   double lot=NormalizeLot(FixedLot), upu=DollarsPerPriceUnit(lot);
-   if(upu<=0) { Print("[!] Tick value unavailable"); return(false); }
+   double lot=NormalizeLot(FixedLot), upu=DollarsPerPriceUnit(lot,direction);
+   if(upu<=0) { Print("[!] OrderCalcProfit unavailable for ",_Symbol,"; entry blocked to avoid incorrect dollar risk"); return(false); }
    double slDist=RiskUSD/upu,tpDist=RewardUSD>0 ? RewardUSD/upu : 0;
    double stopLevel=SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL)*_Point;
    if(stopLevel<=0) stopLevel=20*_Point;
@@ -570,7 +577,7 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
          g_entriesToday++;
          // As in MT4, observe new positions during the next tracking pass.
          Print("[SIGNAL ",seq,"/",total,"] engine=",engine==ENGINE_SP2L ? "SP2L" : "PB"," dir=",direction,
-               " order=",trade.ResultOrder()," lot=",DoubleToString(lot,2)," SL=",RiskUSD,"$ TP=",RewardUSD,"$");
+               " order=",trade.ResultOrder()," lot=",DoubleToString(lot,2)," SL=",RiskUSD,"$ TP=",RewardUSD,"$ | account/price=",DoubleToString(upu,4)," SL distance=",DoubleToString(slDist,_Digits));
          return(true);
       }
       Print("[X] Send attempt ",attempt+1," failed: ",trade.ResultRetcodeDescription());
