@@ -8,6 +8,10 @@ Entry priority, closed-bar Pullback/SP2L/UT/BB voting, and exit-only reversal we
 
 Static defaults/source-core check: `python3 tests/goldfusion/check_mt5_port.py`.
 
+## Reversal semantics (same as MT4)
+
+`UseReversal` is not purely exit-only. On each new bar with at least one open position, if the reversal quorum is confirmed in *either* direction, the EA closes the opposite-side positions and returns before the entry gates, even when nothing was closed (the direction of the open positions is not checked). With the approved UT + BB filters every entry-grade Pullback signal also meets the quorum in Pullback-only mode (and every SP2L signal in SP2L-only mode), so with `UseReversal=true` no new entry is opened while any position is open; in BOTH mode the same holds for Pullback entries but not for SP2L entries. Keep this in mind when comparing runs with `UseReversal` on and off. Behaviour is intentionally unchanged so earlier backtests stay comparable. See `tests/goldfusion/MT5_ENGINE_COMPARISON_FA.md`; `tests/goldfusion/check_engine_test_configs.py` pins the source lines this statement relies on.
+
 ## Exit diagnostics (MT5)
 
 The EA now prints one `[EXIT_DIAG]` line per tracked closed position with its position ID, PB/SP2L entry engine, side, entry/exit timestamps and prices, broker's deal reason, diagnostic exit category and *net USD including swaps/fees/commissions*. At the end of the test `[EXIT_SUMMARY]` groups counts and net results by entry engine and category. These lines are reporting only; trade signals and management rules are unchanged. Run a non-visual backtest under the same conditions and share the **summary lines** (and several large-loss `[EXIT_DIAG]` lines) rather than the entire journal. If the summary is unavailable, share the corresponding tester-agent Journal or put its text in a Gist.
