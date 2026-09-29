@@ -69,6 +69,7 @@ input int Slippage=30;
 MqlRates rates[];
 double opens[],highs[],lows[],closes[];
 int g_bars=0;
+datetime g_lastStatsSecond=0,g_lastModifyLogMinute=0;
 int emaTrend=INVALID_HANDLE,emaPull=INVALID_HANDLE,atrHandle=INVALID_HANDLE,utAtrHandle=INVALID_HANDLE,rsiHandle=INVALID_HANDLE;
 datetime g_lastBarTime=0;
 int g_barIndex=0,g_slHitBar=-1,g_curDayId=0,g_entriesToday=0;
@@ -76,6 +77,9 @@ double g_utStop=0,g_dayStartEquity=0,g_profitDollar=0;
 int g_trades=0,g_wins=0,g_losses=0,g_breakevens=0,g_tradesPB=0,g_winsPB=0,g_tradesSP=0,g_winsSP=0;
 ulong g_knownTickets[MAX_TRACKED],g_beTickets[MAX_TRACKED],g_trailTickets[MAX_TRACKED];
 int g_knownCount=0,g_beCount=0,g_trailCount=0;
+ulong g_failedModifyIds[MAX_TRACKED];
+datetime g_failedModifySecond[MAX_TRACKED];
+int g_failedModifyCount=0;
 // MQL4 series index: zero is the forming candle.
 bool LoadRates()
 {
@@ -211,14 +215,44 @@ bool TradeDone()
    uint rc=trade.ResultRetcode();
    return(rc==TRADE_RETCODE_DONE || rc==TRADE_RETCODE_DONE_PARTIAL);
 }
+bool ModifyRecentlyFailed(ulong id)
+{
+   for(int i=0;i<g_failedModifyCount;i++)
+      if(g_failedModifyIds[i]==id) return(g_failedModifySecond[i]==TimeCurrent());
+   return(false);
+}
+void MarkModifyFailure(ulong id)
+{
+   int slot=-1;
+   for(int i=0;i<g_failedModifyCount;i++) if(g_failedModifyIds[i]==id) { slot=i; break; }
+   if(slot<0)
+   {
+      if(g_failedModifyCount<MAX_TRACKED) slot=g_failedModifyCount++;
+      else slot=(int)(id%MAX_TRACKED);
+   }
+   g_failedModifyIds[slot]=id;
+   g_failedModifySecond[slot]=TimeCurrent();
+}
 bool TryModify(ulong ticket,double sl,double tp)
 {
+   // Invalid/frozen stops cannot be fixed by immediately resending the same
+   // request. On real-tick tests those retries plus Sleep stalled the tester.
    for(int i=0;i<3;i++)
    {
-      if(trade.PositionModify(ticket,sl,tp) && TradeDone()) return(true);
-      Print("PositionModify #",ticket," attempt ",i+1," failed: ",trade.ResultRetcodeDescription());
-      if(i<2) Sleep(50);
+      bool sent=trade.PositionModify(ticket,sl,tp);
+      uint rc=trade.ResultRetcode();
+      if(sent && (TradeDone() || rc==TRADE_RETCODE_NO_CHANGES)) return(true);
+      datetime minute=TimeCurrent()/60*60;
+      if(minute!=g_lastModifyLogMinute)
+      {
+         Print("PositionModify #",ticket," failed: ",trade.ResultRetcodeDescription());
+         g_lastModifyLogMinute=minute;
+      }
+      if(rc!=TRADE_RETCODE_REQUOTE && rc!=TRADE_RETCODE_PRICE_CHANGED &&
+         rc!=TRADE_RETCODE_TIMEOUT && rc!=TRADE_RETCODE_CONNECTION) break;
+      if(i<2 && !MQLInfoInteger(MQL_TESTER)) Sleep(50);
    }
+   if(PositionSelectByTicket(ticket)) MarkModifyFailure((ulong)PositionGetInteger(POSITION_IDENTIFIER));
    return(false);
 }
 bool CloseTicket(ulong ticket,string reason)
@@ -227,7 +261,7 @@ bool CloseTicket(ulong ticket,string reason)
    {
       if(trade.PositionClose(ticket,Slippage) && TradeDone()) return(true);
       Print(reason," #",ticket," attempt ",r+1," failed: ",trade.ResultRetcodeDescription());
-      if(r<2) Sleep(100);
+      if(r<2 && !MQLInfoInteger(MQL_TESTER)) Sleep(100);
    }
    return(false);
 }
@@ -286,7 +320,7 @@ void ManageOneOrder(ulong ticket)
          if((newSL==0 || sl>newSL) && sl-tick.ask>=stopLevel) newSL=sl;
       }
    }
-   if(newSL!=curSL && !TryModify(ticket,newSL,PositionGetDouble(POSITION_TP))) Print("Position #",ticket," modify failed after retries");
+   if(newSL!=curSL && !ModifyRecentlyFailed(positionId)) TryModify(ticket,newSL,PositionGetDouble(POSITION_TP));
 }
 void ManageAllPositions()
 {
@@ -540,7 +574,7 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
          return(true);
       }
       Print("[X] Send attempt ",attempt+1," failed: ",trade.ResultRetcodeDescription());
-      if(attempt<2) Sleep(100);
+      if(attempt<2 && !MQLInfoInteger(MQL_TESTER)) Sleep(100);
    }
    return(false);
 }
@@ -597,6 +631,11 @@ void TrackClosedOrders()
 void ShowStats()
 {
    if(!ShowStatsTable) return;
+   // One chart update per server second is enough; 75M-tick tests must not
+   // rebuild the display on every intra-second tick.
+   datetime second=TimeCurrent();
+   if(second==g_lastStatsSecond) return;
+   g_lastStatsSecond=second;
    string s="[GoldFusion v6.2 MT5 | "+_Symbol+" | "+EnumToString(SignalMode)+"]\n";
    s+=TimeToString(TimeCurrent(),TIME_DATE)+" daily stats\n";
    s+="Trades: "+IntegerToString(g_trades)+" W:"+IntegerToString(g_wins)+" L:"+IntegerToString(g_losses)+" BE:"+IntegerToString(g_breakevens)+"\n";
@@ -652,11 +691,14 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    CheckDailyReset(); TrackClosedOrders();
-   if(!LoadRates()) return;
-   bool newBar=(rates[0].time!=g_lastBarTime);
+   // Closed-bar entry signals/indicators only need a fresh series once per bar.
+   datetime barTime=iTime(_Symbol,_Period,0);
+   if(barTime==0) return;
+   bool newBar=(barTime!=g_lastBarTime);
+   if(newBar && !LoadRates()) return;
    if(newBar)
    {
-      g_lastBarTime=rates[0].time;g_barIndex++;
+      g_lastBarTime=barTime;g_barIndex++;
       if(UseUTFilter) UpdateUTStop(1);
    }
    if(UseTimeFilter && CloseOutsideSession && CountMyOrders()>0 && !InSession())
