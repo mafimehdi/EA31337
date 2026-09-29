@@ -637,6 +637,7 @@ void TrackClosedOrders()
 }
 void ShowStats()
 {
+   if(g_diagArmed && g_diagTicks==0) Print("[DIAG] ShowStats entered");
    if(!ShowStatsTable) return;
    // One chart update per server second is enough; 75M-tick tests must not
    // rebuild the display on every intra-second tick.
@@ -647,6 +648,7 @@ void ShowStats()
    s+=TimeToString(TimeCurrent(),TIME_DATE)+" daily stats\n";
    s+="Trades: "+IntegerToString(g_trades)+" W:"+IntegerToString(g_wins)+" L:"+IntegerToString(g_losses)+" BE:"+IntegerToString(g_breakevens)+"\n";
    s+="Net$: "+DoubleToString(g_profitDollar,2)+" PB "+IntegerToString(g_winsPB)+"/"+IntegerToString(g_tradesPB)+" SP2L "+IntegerToString(g_winsSP)+"/"+IntegerToString(g_tradesSP)+"\n";
+   if(g_diagArmed && g_diagTicks==0) Print("[DIAG] ShowStats before CountMyOrders");
    s+="Open: "+IntegerToString(CountMyOrders())+"/"+IntegerToString(MathMax(1,MaxOpenTrades))+" (per signal: "+IntegerToString(TradesPerSignal)+")\n";
    string status="READY";
    if(UseTimeFilter && !InSession()) status="session closed";
@@ -665,7 +667,9 @@ void ShowStats()
       if(UseUTFilter) n++; if(UseRSIFilter) n++; if(UseBBFilter) n++;
       s+="\nReversal: "+(ReversalPrimaryEngine()==ENGINE_PB ? "PB" : "SP2L")+" primary, quorum "+IntegerToString((2*n+2)/3)+"/"+IntegerToString(n);
    }
+   if(g_diagArmed && g_diagTicks==0) Print("[DIAG] ShowStats before Comment");
    Comment(s);
+   if(g_diagArmed && g_diagTicks==0) Print("[DIAG] ShowStats after Comment");
 }
 int OnInit()
 {
@@ -751,5 +755,7 @@ void OnTick()
       int engine=ENGINE_PB,dir=GetSignal(engine);
       if(dir!=0) OpenTrades(dir,engine,MathMin(TradesPerSignal,slots));
    }
+   if(g_diagArmed && g_diagTicks==0) Print("[DIAG] returned from OpenTrades; before ShowStats");
    ShowStats();
+   if(g_diagArmed && g_diagTicks==0) Print("[DIAG] returned from ShowStats; OnTick end");
 }
