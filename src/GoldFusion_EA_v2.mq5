@@ -68,7 +68,7 @@ input int Slippage=30;
 #define MAX_TRACKED 64
 MqlRates rates[];
 double opens[],highs[],lows[],closes[];
-int Bars=0;
+int g_bars=0;
 int emaTrend=INVALID_HANDLE,emaPull=INVALID_HANDLE,atrHandle=INVALID_HANDLE,utAtrHandle=INVALID_HANDLE,rsiHandle=INVALID_HANDLE;
 datetime g_lastBarTime=0;
 int g_barIndex=0,g_slHitBar=-1,g_curDayId=0,g_entriesToday=0;
@@ -80,13 +80,13 @@ int g_knownCount=0,g_beCount=0,g_trailCount=0;
 bool LoadRates()
 {
    int available=iBars(_Symbol,_Period);
-   Bars=MathMin(available,MathMax(TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+20,350));
-   if(Bars<=0) return(false);
+   g_bars=MathMin(available,MathMax(TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+20,350));
+   if(g_bars<=0) return(false);
    ArraySetAsSeries(rates,true);
-   if(CopyRates(_Symbol,_Period,0,Bars,rates)<Bars) return(false);
-   ArrayResize(opens,Bars); ArrayResize(highs,Bars); ArrayResize(lows,Bars); ArrayResize(closes,Bars);
+   if(CopyRates(_Symbol,_Period,0,g_bars,rates)<g_bars) return(false);
+   ArrayResize(opens,g_bars); ArrayResize(highs,g_bars); ArrayResize(lows,g_bars); ArrayResize(closes,g_bars);
    ArraySetAsSeries(opens,true); ArraySetAsSeries(highs,true); ArraySetAsSeries(lows,true); ArraySetAsSeries(closes,true);
-   for(int i=0;i<Bars;i++) { opens[i]=rates[i].open; highs[i]=rates[i].high; lows[i]=rates[i].low; closes[i]=rates[i].close; }
+   for(int i=0;i<g_bars;i++) { opens[i]=rates[i].open; highs[i]=rates[i].high; lows[i]=rates[i].low; closes[i]=rates[i].close; }
    return(true);
 }
 #define Open opens
@@ -104,7 +104,7 @@ double BufferAt(int handle,int shift)
 double EMA(int period,int shift) { return(BufferAt(period==TrendEMA ? emaTrend : emaPull,shift)); }
 double TrueRange(int i)
 {
-   if(i+1<Bars) return(MathMax(High[i]-Low[i],MathMax(MathAbs(High[i]-Close[i+1]),MathAbs(Low[i]-Close[i+1]))));
+   if(i+1<g_bars) return(MathMax(High[i]-Low[i],MathMax(MathAbs(High[i]-Close[i+1]),MathAbs(Low[i]-Close[i+1]))));
    return(High[i]-Low[i]);
 }
 double SafeATR(int period,int shift)
@@ -113,7 +113,7 @@ double SafeATR(int period,int shift)
    if(atr<=0 || atr<0.00001)
    {
       double sum=0; int cnt=0;
-      for(int i=shift;i<shift+period && i<Bars;i++) { double tr=TrueRange(i); if(tr>0) { sum+=tr; cnt++; } }
+      for(int i=shift;i<shift+period && i<g_bars;i++) { double tr=TrueRange(i); if(tr>0) { sum+=tr; cnt++; } }
       atr=cnt>0 ? sum/cnt : (High[0]-Low[0])*0.5;
    }
    return(atr);
@@ -297,7 +297,7 @@ void ManageAllPositions()
 }
 void UpdateUTStop(int shift)
 {
-   if(shift+1>=Bars) return;
+   if(shift+1>=g_bars) return;
    double c=Close[shift], cP=Close[shift+1];
    double nLoss=UT_KeyValue*SafeATR(UT_ATRPeriod,shift);
    if(g_utStop==0) g_utStop=c;
@@ -323,7 +323,7 @@ double BBMid(int shift)
 }
 bool BBAllow(int dir)
 {
-   if(!UseBBFilter || Bars<BB_Length+3) return(true);
+   if(!UseBBFilter || g_bars<BB_Length+3) return(true);
    double basis=BBMid(1), prev=BBMid(2), c=Close[1];
    if(BB_FilterMode==BB_POSITION) return(dir>0 ? c>basis : c<basis);
    if(BB_FilterMode==BB_SLOPE) return(dir>0 ? basis>prev : basis<prev);
@@ -356,7 +356,7 @@ int GetPullbackSignal()
 bool IsBullishSpike(int s,double atr,double &hh)
 {
    int n=SP2L_SpikeBars;
-   if(s+n+1>=Bars) return(false);
+   if(s+n+1>=g_bars) return(false);
    hh=0;
    double origin=MathMin(Low[s+n],Low[s+n-1]);
    for(int i=s;i<s+n;i++)
@@ -378,7 +378,7 @@ bool IsBullishSpike(int s,double atr,double &hh)
 bool IsBearishSpike(int s,double atr,double &ll)
 {
    int n=SP2L_SpikeBars;
-   if(s+n+1>=Bars) return(false);
+   if(s+n+1>=g_bars) return(false);
    ll=0;
    double origin=MathMax(High[s+n],High[s+n-1]);
    for(int i=s;i<s+n;i++)
@@ -480,7 +480,7 @@ bool ReversalConfirmed(int dir,int pbVote,int spVote)
    if(SignalMode!=MODE_PULLBACK) { total++; if(spVote==dir) votes++; }
    if(UseUTFilter) { total++; if(g_utStop!=0 && UTAllow(dir)) votes++; }
    if(UseRSIFilter) { total++; if(RSIAllow(dir)) votes++; }
-   if(UseBBFilter) { total++; if(Bars>=BB_Length+3 && BBAllow(dir)) votes++; }
+   if(UseBBFilter) { total++; if(g_bars>=BB_Length+3 && BBAllow(dir)) votes++; }
    int required=(2*total+2)/3;
    if(votes<required) return(false);
    Print("[REVERSAL] ",(dir>0 ? "BUY" : "SELL")," confirmed: ",votes,"/",total," (need ",required,") primary=",(primary==ENGINE_PB ? "PB" : "SP2L"));
@@ -664,7 +664,7 @@ void OnTick()
    int openNow=CountMyOrders();
    if(openNow>0) ManageAllPositions();
    if(!newBar) { ShowStats();return; }
-   if(Bars<TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+5)
+   if(g_bars<TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+5)
    { ShowStats();return; }
    // Reversal is exit-only, before session and entry gates.
    if(UseReversal && openNow>0)

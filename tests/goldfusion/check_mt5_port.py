@@ -21,6 +21,8 @@ start, end = 'void UpdateUTStop(', '// Closing is independent of session'
 core4 = mq4[mq4.index(start):mq4.index(end)]
 core5 = mq5[mq5.index(start):mq5.index('bool CloseReversedPositions(', mq5.index(start))]
 core4 = core4.replace('iRSI(_Symbol,PERIOD_CURRENT,RSI_Length,PRICE_CLOSE,1)', 'BufferAt(rsiHandle,1)')
+core4 = re.sub(r'\bBars\b', 'g_bars', core4)
 assert core4.rstrip() == core5.rstrip(), 'Closed-bar signal and reversal logic drifted from MT4'
+assert not re.search(r'\bBars\b', mq5), 'MQL5 Bars() built-in must not be shadowed'
 assert 'ACCOUNT_MARGIN_MODE_RETAIL_HEDGING' in mq5
 print('MT5 default inputs match approved .45 SET; signals/reversal logic match supplied MT4 source.')
