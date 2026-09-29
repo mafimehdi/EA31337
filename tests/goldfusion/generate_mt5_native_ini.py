@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Standalone MT5 Tester INIs from the user's saved [TesterInputs] template."""
+from pathlib import Path
+from zipfile import ZipFile, ZIP_DEFLATED
+
+root=Path(__file__).resolve().parents[2]
+out=root/'sets/goldfusion_mt5_native_ini_2026'
+out.mkdir(parents=True,exist_ok=True)
+tester='''[Tester]
+Expert=15.ex5
+Symbol=XAUUSD_i
+Period=M15
+Optimization=0
+Model=4
+FromDate=2026.01.01
+ToDate=2026.09.28
+ForwardMode=0
+Deposit=500
+Currency=USD
+ProfitInPips=0
+Leverage=1
+ExecutionMode=0
+OptimizationCriterion=0
+Visual=0
+'''
+# Preserved verbatim from the native MT5 INI supplied by the user. Only the
+# first field of SignalMode and ReversalPrimary may vary between cases.
+inputs='''SignalMode=2||0||0||2||N
+TrendEMA=200||200||1||2000||N
+PullbackEMA=50||50||1||500||N
+PullbackValidBars=12||12||1||120||N
+ATR_Period=14||14||1||140||N
+SP2L_SpikeBars=2||2||1||20||N
+SP2L_MinSpikeATR=1.2||1.2||0.120000||12.000000||N
+SP2L_MinBodyRatio=0.45||0.45||0.045000||4.500000||N
+SP2L_RequireGap=true||false||0||true||N
+SP2L_MaxLegBars=12||12||1||120||N
+SP2L_StrictBreak=false||false||0||true||N
+SP2L_UseTrendFilter=true||false||0||true||N
+UseUTFilter=true||false||0||true||N
+UT_KeyValue=1.0||1.0||0.100000||10.000000||N
+UT_ATRPeriod=14||14||1||140||N
+UseRSIFilter=false||false||0||true||N
+RSI_Length=14||14||1||140||N
+RSI_Overbought=70||70||1||700||N
+RSI_Oversold=30||30||1||300||N
+RSI_MidLine=50.0||50.0||5.000000||500.000000||N
+UseBBFilter=true||false||0||true||N
+BB_Length=50||50||1||500||N
+BB_FilterMode=2||0||0||2||N
+FixedLot=0.01||0.01||0.001000||0.100000||N
+RiskUSD=10.0||10.0||1.000000||100.000000||N
+RewardUSD=50.0||50.0||5.000000||500.000000||N
+MaxOpenTrades=3||3||1||30||N
+TradesPerSignal=3||3||1||30||N
+UseBreakEven=true||false||0||true||N
+BE_TriggerUSD=0.4||0.4||0.040000||4.000000||N
+BE_Extra_Points=20||20||1||200||N
+UseBE_Retreat=true||false||0||true||N
+BE_RetreatMode=0||0||0||1||N
+BE_RetreatDistUSD=2.0||2.0||0.200000||20.000000||N
+UseTrailing=true||false||0||true||N
+TrailStartUSD=1.0||1.0||0.100000||10.000000||N
+TrailDistUSD=1.0||1.0||0.100000||10.000000||N
+MaxDailyLossUSD=0.0||0.0||0.000000||0.000000||N
+MaxTradesPerDay=0||0||1||10||N
+MaxSpreadPoints=50||50||1||500||N
+AllowLong=true||false||0||true||N
+AllowShort=true||false||0||true||N
+SL_CooldownBars=1||1||1||10||N
+UseTimeFilter=true||false||0||true||N
+SessionStartHour=15||15||1||150||N
+SessionEndHour=20||20||1||200||N
+CloseOutsideSession=false||false||0||true||N
+DST_Mode=0||0||1||10||N
+UseReversal=true||false||0||true||N
+ReversalPrimary=1||0||0||2||N
+ShowStatsTable=true||false||0||true||N
+MagicNumber=20260927||20260927||1||202609270||N
+Slippage=30||30||1||300||N
+'''
+assert len(inputs.splitlines())==53
+variants={'goldfusion_mt5_both_body045.ini':('2','1'),
+          'goldfusion_mt5_pullback_only_body045.ini':('0','1'),
+          'goldfusion_mt5_sp2l_only_body045.ini':('1','0')}
+for name,(mode,primary) in variants.items():
+    configured=inputs.replace('SignalMode=2||','SignalMode='+mode+'||',1).replace('ReversalPrimary=1||','ReversalPrimary='+primary+'||',1)
+    (out/name).write_text(tester+'[TesterInputs]\n'+configured,encoding='ascii')
+    assert len(configured.splitlines())==53
+    assert not (mode=='1' and primary=='1')
+with ZipFile(out.with_suffix('.zip'),'w',ZIP_DEFLATED) as z:
+    for p in sorted(out.iterdir()):
+        if p.is_file(): z.write(p,p.relative_to(out.parent))
+print('Generated 3 standalone native MT5 INI files (53 TesterInputs each)')
