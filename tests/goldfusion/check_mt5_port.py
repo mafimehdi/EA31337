@@ -25,6 +25,7 @@ core4 = re.sub(r'\bBars\b', 'g_bars', core4)
 assert core4.rstrip() == core5.rstrip(), 'Closed-bar signal and reversal logic drifted from MT4'
 assert not re.search(r'\bBars\b', mq5), 'MQL5 Bars() built-in must not be shadowed'
 assert 'for(int i=PositionsTotal()-1;i>=0;i--) if(Mine(PositionGetTicket(i))) n++;' in mq5
+assert '[EXIT_DIAG]' in mq5 and '[EXIT_SUMMARY]' in mq5
 assert 'OrderCalcProfit(' in mq5 and 'SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE)' not in mq5
 assert 'ACCOUNT_MARGIN_MODE_RETAIL_HEDGING' in mq5
 print('MT5 default inputs match approved .45 SET; signals/reversal logic match supplied MT4 source.')

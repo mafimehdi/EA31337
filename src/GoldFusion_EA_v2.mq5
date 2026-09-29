@@ -80,6 +80,41 @@ int g_knownCount=0,g_beCount=0,g_trailCount=0;
 ulong g_failedModifyIds[MAX_TRACKED];
 datetime g_failedModifySecond[MAX_TRACKED];
 int g_failedModifyCount=0;
+#define EXIT_BUCKETS 7
+ulong g_exitIntentIds[MAX_TRACKED];
+int g_exitIntentKinds[MAX_TRACKED],g_exitIntentCount=0;
+int g_exitCounts[2][EXIT_BUCKETS];
+double g_exitNet[2][EXIT_BUCKETS];
+// 0=initial SL, 1=BE/retreat SL, 2=trailing SL, 3=TP,
+// 4=reversal, 5=session, 6=other/unknown. These are diagnostic labels.
+string ExitName(int kind)
+{
+   if(kind==0) return("INITIAL_SL");
+   if(kind==1) return("BE_OR_RETREAT_SL");
+   if(kind==2) return("TRAIL_SL");
+   if(kind==3) return("TP");
+   if(kind==4) return("REVERSAL_CLOSE");
+   if(kind==5) return("SESSION_CLOSE");
+   return("OTHER_UNKNOWN");
+}
+void MarkExitIntent(ulong id,int kind)
+{
+   for(int i=0;i<g_exitIntentCount;i++)
+      if(g_exitIntentIds[i]==id) { g_exitIntentKinds[i]=kind; return; }
+   if(g_exitIntentCount>=MAX_TRACKED) return;
+   g_exitIntentIds[g_exitIntentCount]=id;
+   g_exitIntentKinds[g_exitIntentCount++]=kind;
+}
+int ExitIntent(ulong id)
+{
+   for(int i=0;i<g_exitIntentCount;i++) if(g_exitIntentIds[i]==id) return(g_exitIntentKinds[i]);
+   return(-1);
+}
+void RemoveExitIntent(ulong id)
+{
+   for(int i=0;i<g_exitIntentCount;i++) if(g_exitIntentIds[i]==id)
+   { for(int j=i;j<g_exitIntentCount-1;j++) { g_exitIntentIds[j]=g_exitIntentIds[j+1];g_exitIntentKinds[j]=g_exitIntentKinds[j+1]; } g_exitIntentCount--;return; }
+}
 // MQL4 series index: zero is the forming candle.
 bool LoadRates()
 {
@@ -264,9 +299,15 @@ bool TryModify(ulong ticket,double sl,double tp)
 }
 bool CloseTicket(ulong ticket,string reason)
 {
+   if(!PositionSelectByTicket(ticket)) return(false);
+   ulong id=(ulong)PositionGetInteger(POSITION_IDENTIFIER);
    for(int r=0;r<3;r++)
    {
-      if(trade.PositionClose(ticket,Slippage) && TradeDone()) return(true);
+      if(trade.PositionClose(ticket,Slippage) && TradeDone())
+      {
+         MarkExitIntent(id,reason=="Session close" ? 5 : 4);
+         return(true);
+      }
       Print(reason," #",ticket," attempt ",r+1," failed: ",trade.ResultRetcodeDescription());
       if(r<2 && !MQLInfoInteger(MQL_TESTER)) Sleep(100);
    }
@@ -608,16 +649,62 @@ void TrackClosedOrders()
       if(open) continue;
       if(HistorySelectByPosition(id))
       {
-         double p=0; bool found=false; int eng=ENGINE_PB;
+         double p=0,entryPrice=0,exitPrice=0,exitSL=0;
+         datetime entryTime=0,exitTime=0;
+         bool found=false,hasExit=false;
+         int eng=ENGINE_PB,side=0;
+         ENUM_DEAL_REASON dealReason=DEAL_REASON_CLIENT;
          for(int j=0;j<HistoryDealsTotal();j++)
          {
             ulong d=HistoryDealGetTicket(j);
             if(d==0) continue;
             p+=HistoryDealGetDouble(d,DEAL_PROFIT)+HistoryDealGetDouble(d,DEAL_SWAP)+HistoryDealGetDouble(d,DEAL_COMMISSION)+HistoryDealGetDouble(d,DEAL_FEE);
-            if(HistoryDealGetInteger(d,DEAL_ENTRY)==DEAL_ENTRY_IN) { found=true; if(StringFind(HistoryDealGetString(d,DEAL_COMMENT),"SP2L")>=0) eng=ENGINE_SP2L; }
+            ENUM_DEAL_ENTRY phase=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(d,DEAL_ENTRY);
+            if(phase==DEAL_ENTRY_IN)
+            {
+               found=true;
+               entryPrice=HistoryDealGetDouble(d,DEAL_PRICE);
+               entryTime=(datetime)HistoryDealGetInteger(d,DEAL_TIME);
+               side=HistoryDealGetInteger(d,DEAL_TYPE)==DEAL_TYPE_BUY ? 1 : -1;
+               if(StringFind(HistoryDealGetString(d,DEAL_COMMENT),"SP2L")>=0) eng=ENGINE_SP2L;
+            }
+            else if(phase==DEAL_ENTRY_OUT || phase==DEAL_ENTRY_OUT_BY || phase==DEAL_ENTRY_INOUT)
+            {
+               // For partial closes retain the last exit's broker reason;
+               // aggregate net includes all deals of the position.
+               hasExit=true;
+               exitPrice=HistoryDealGetDouble(d,DEAL_PRICE);
+               exitSL=HistoryDealGetDouble(d,DEAL_SL);
+               exitTime=(datetime)HistoryDealGetInteger(d,DEAL_TIME);
+               dealReason=(ENUM_DEAL_REASON)HistoryDealGetInteger(d,DEAL_REASON);
+            }
          }
          if(found)
          {
+            int kind=6;
+            if(hasExit)
+            {
+               if(dealReason==DEAL_REASON_TP) kind=3;
+               else if(dealReason==DEAL_REASON_SL)
+               {
+                  if(ListContains(g_trailTickets,g_trailCount,id)) kind=2;
+                  else if(ListContains(g_beTickets,g_beCount,id)) kind=1;
+                  else kind=0;
+               }
+               else
+               {
+                  int intent=ExitIntent(id);
+                  if(intent==4 || intent==5) kind=intent;
+               }
+            }
+            g_exitCounts[eng][kind]++;
+            g_exitNet[eng][kind]+=p;
+            Print("[EXIT_DIAG] position=",id," engine=",eng==ENGINE_SP2L ? "SP2L" : "PB",
+                  " side=",side>0 ? "BUY" : "SELL",
+                  " entry=",TimeToString(entryTime,TIME_DATE|TIME_SECONDS),"@",DoubleToString(entryPrice,_Digits),
+                  " exit=",TimeToString(exitTime,TIME_DATE|TIME_SECONDS),"@",DoubleToString(exitPrice,_Digits),
+                  " exit_sl=",DoubleToString(exitSL,_Digits)," broker_reason=",EnumToString(dealReason),
+                  " category=",ExitName(kind)," net_usd=",DoubleToString(p,2));
             g_trades++; g_profitDollar+=p;
             if(p>0) g_wins++;
             else if(p<0) { g_losses++;g_slHitBar=g_barIndex; }
@@ -627,6 +714,7 @@ void TrackClosedOrders()
          }
       }
       else Print("[!] Closed position ",id," not found in account history");
+      RemoveExitIntent(id);
       ListRemove(g_knownTickets,g_knownCount,id);
       ListRemove(g_beTickets,g_beCount,id);
       ListRemove(g_trailTickets,g_trailCount,id);
@@ -691,6 +779,12 @@ int OnInit()
 }
 void OnDeinit(const int reason)
 {
+   Print("[EXIT_SUMMARY] Closed positions tracked since EA start; net includes profit, swap, commission and fees.");
+   for(int e=0;e<2;e++) for(int k=0;k<EXIT_BUCKETS;k++)
+      if(g_exitCounts[e][k]>0)
+         Print("[EXIT_SUMMARY] engine=",e==ENGINE_SP2L ? "SP2L" : "PB",
+               " category=",ExitName(k)," count=",g_exitCounts[e][k],
+               " net_usd=",DoubleToString(g_exitNet[e][k],2));
    Comment("");
    IndicatorRelease(emaTrend); IndicatorRelease(emaPull);
    IndicatorRelease(atrHandle); IndicatorRelease(utAtrHandle); IndicatorRelease(rsiHandle);
