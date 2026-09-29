@@ -603,8 +603,19 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
    if(tpDist>0 && tpDist<stopLevel) tpDist=stopLevel+_Point;
    ENUM_ORDER_TYPE op=direction>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    double margin=0;
-   if(!OrderCalcMargin(op,_Symbol,lot,direction>0 ? tick.ask : tick.bid,margin) || margin>AccountInfoDouble(ACCOUNT_MARGIN_FREE))
-   { Print("[!] Not enough free margin"); return(false); }
+   ResetLastError();
+   bool calculated=OrderCalcMargin(op,_Symbol,lot,direction>0 ? tick.ask : tick.bid,margin);
+   int calcError=GetLastError();
+   double freeMargin=AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   if(!calculated || margin>freeMargin)
+   {
+      Print("[MARGIN_DIAG] entry blocked: calculated=",calculated," error=",calcError,
+            " required=",DoubleToString(margin,2)," free=",DoubleToString(freeMargin,2),
+            " leverage=",AccountInfoInteger(ACCOUNT_LEVERAGE)," lot=",DoubleToString(lot,2),
+            " price=",DoubleToString(direction>0 ? tick.ask : tick.bid,_Digits),
+            " margin_initial=",DoubleToString(SymbolInfoDouble(_Symbol,SYMBOL_MARGIN_INITIAL),2));
+      return(false);
+   }
    string comment=engine==ENGINE_SP2L ? "GF62 SP2L" : "GF62 PB";
    for(int attempt=0;attempt<3;attempt++)
    {
@@ -774,7 +785,7 @@ int OnInit()
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetAsyncMode(false);
    CheckDailyReset();g_lastBarTime=0;
-   Print("GoldFusion EA v6.2 MT5 init | ",EnumToString(SignalMode)," | lot=",FixedLot," | SL=",RiskUSD,"$ TP=",RewardUSD,"$ | Hedging only");
+   Print("GoldFusion EA v6.2 MT5 init | ",EnumToString(SignalMode)," | lot=",FixedLot," | SL=",RiskUSD,"$ TP=",RewardUSD,"$ | Hedging only | account_leverage=",AccountInfoInteger(ACCOUNT_LEVERAGE)," free_margin=",DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE),2));
    return(INIT_SUCCEEDED);
 }
 void OnDeinit(const int reason)
