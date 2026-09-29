@@ -80,6 +80,9 @@ int g_knownCount=0,g_beCount=0,g_trailCount=0;
 ulong g_failedModifyIds[MAX_TRACKED];
 datetime g_failedModifySecond[MAX_TRACKED];
 int g_failedModifyCount=0;
+// Temporary bounded diagnostics: first five ticks and ten M15 bars after first batch.
+bool g_diagArmed=false;
+int g_diagTicks=0,g_diagBars=0;
 // MQL4 series index: zero is the forming candle.
 bool LoadRates()
 {
@@ -587,7 +590,11 @@ void OpenTrades(int direction,int engine,int count)
       if(MaxTradesPerDay>0 && g_entriesToday>=MaxTradesPerDay) break;
       if(OpenSingleTrade(direction,engine,i+1,count)) opened++;
    }
-   if(opened>0) Print("[BATCH] ",opened," trade(s) opened for one ",engine==ENGINE_SP2L ? "SP2L" : "PB"," signal");
+   if(opened>0)
+   {
+      Print("[BATCH] ",opened," trade(s) opened for one ",engine==ENGINE_SP2L ? "SP2L" : "PB"," signal");
+      if(!g_diagArmed) { g_diagArmed=true; Print("[DIAG] armed after first batch; next tick will show entry stage"); }
+   }
 }
 // MT5 position tickets are distinct on hedging accounts; closed positions are
 // reconciled by their immutable POSITION_IDENTIFIER and history position id.
@@ -690,12 +697,19 @@ void OnDeinit(const int reason)
 }
 void OnTick()
 {
-   CheckDailyReset(); TrackClosedOrders();
+   bool diag=(g_diagArmed && g_diagTicks<5);
+   if(diag) { g_diagTicks++; Print("[DIAG] tick ",g_diagTicks," begin at ",TimeToString(TimeCurrent(),TIME_DATE|TIME_SECONDS)); }
+   CheckDailyReset();
+   if(diag) Print("[DIAG] before TrackClosedOrders");
+   TrackClosedOrders();
+   if(diag) Print("[DIAG] after TrackClosedOrders");
    // Closed-bar entry signals/indicators only need a fresh series once per bar.
    datetime barTime=iTime(_Symbol,_Period,0);
    if(barTime==0) return;
    bool newBar=(barTime!=g_lastBarTime);
+   if(diag) Print("[DIAG] iTime done; newBar=",newBar);
    if(newBar && !LoadRates()) return;
+   if(diag) Print("[DIAG] LoadRates done");
    if(newBar)
    {
       g_lastBarTime=barTime;g_barIndex++;
@@ -704,8 +718,15 @@ void OnTick()
    if(UseTimeFilter && CloseOutsideSession && CountMyOrders()>0 && !InSession())
    { CloseAllMyPositions();ShowStats();return; }
    int openNow=CountMyOrders();
+   if(diag) Print("[DIAG] CountMyOrders done, open=",openNow,"; before ManageAllPositions");
    if(openNow>0) ManageAllPositions();
-   if(!newBar) { ShowStats();return; }
+   if(diag) Print("[DIAG] after ManageAllPositions");
+   if(newBar && g_diagArmed && g_diagBars<10)
+   {
+      g_diagBars++;
+      Print("[DIAG] new M15 bar #",g_diagBars," time=",TimeToString(barTime,TIME_DATE|TIME_MINUTES)," open=",openNow);
+   }
+   if(!newBar) { ShowStats();if(diag) Print("[DIAG] intrabar tick complete");return; }
    if(g_bars<TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+5)
    { ShowStats();return; }
    // Reversal is exit-only, before session and entry gates.
