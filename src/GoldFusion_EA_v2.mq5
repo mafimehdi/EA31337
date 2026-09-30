@@ -21,6 +21,9 @@ input bool SP2L_UseTrendFilter=true;
 input bool SP2L_UseEMASlope=false;
 input int SP2L_EMASlopeBars=4;
 input double SP2L_MinSlopeATR=0.2;
+// Optional entry-only anti-chase gate; off preserves legacy signals.
+input bool SP2L_UseMaxExtension=false;
+input double SP2L_MaxExtensionATR=2.5;
 input bool UseUTFilter=true;
 input double UT_KeyValue=1.0;
 input int UT_ATRPeriod=14;
@@ -794,7 +797,7 @@ int OnInit()
 }
 int g_diagBars=0,g_diagOutside=0,g_diagBase=0,g_diagNoGap=0,g_diagNoTrend=0;
 int g_diagUT=0,g_diagBB=0,g_diagRSI=0,g_diagFiltered=0;
-int g_diagCapacity=0,g_diagDaily=0,g_diagCooldown=0,g_diagSpread=0,g_diagEligible=0,g_diagSlope=0;
+int g_diagCapacity=0,g_diagDaily=0,g_diagCooldown=0,g_diagSpread=0,g_diagEligible=0,g_diagSlope=0,g_diagExtension=0;
 
 void OnDeinit(const int reason)
 {
@@ -811,6 +814,7 @@ void OnDeinit(const int reason)
          " RSI=",g_diagRSI," any_filter=",g_diagFiltered,
          " daily_limit=",g_diagDaily," cooldown=",g_diagCooldown,
          " capacity=",g_diagCapacity," slope_rejected=",g_diagSlope,
+         " extension_rejected=",g_diagExtension,
          " spread_signals=",g_diagSpread,
          " eligible_signals=",g_diagEligible,
          " (one count per bar; counterfactuals/filters overlap; not orders)");
@@ -918,6 +922,24 @@ bool SP2LEMASlopeAllows(int dir)
    if(now==0 || past==0 || atr<=0) return(false);
    return(dir*(now-past)>=SP2L_MinSlopeATR*atr);
 }
+// Called only after the unchanged SP2L core confirms a signal. Use its nearest
+// qualifying spike and the same origin definition; no effect on reversal exits.
+bool SP2LExtensionAllows(int dir)
+{
+   if(!SP2L_UseMaxExtension || dir==0) return(true);
+   double atr=SafeATR(ATR_Period,1);
+   if(atr<=0 || SP2L_MaxExtensionATR<=0) return(false);
+   for(int s=2;s<=SP2L_MaxLegBars+2;s++)
+   {
+      double extreme=0;
+      if(dir>0 ? !IsBullishSpike(s,atr,extreme) : !IsBearishSpike(s,atr,extreme)) continue;
+      double origin=dir>0 ? MathMin(Low[s+SP2L_SpikeBars],Low[s+SP2L_SpikeBars-1])
+                          : MathMax(High[s+SP2L_SpikeBars],High[s+SP2L_SpikeBars-1]);
+      double extension=dir*(Close[1]-origin)/atr;
+      return(extension<=SP2L_MaxExtensionATR);
+   }
+   return(false); // Fail closed if the spike cannot be reconstructed.
+}
 // Shadow diagnostics: observe closed-bar candidates; never place or modify orders.
 // Counterfactuals change only the specified condition for measurement, not trading.
 void DiagnoseSP2LBar()
@@ -944,6 +966,7 @@ void DiagnoseSP2LBar()
    {g_diagCooldown++;return;}
    if(CountMyOrders()>=MathMax(1,MaxOpenTrades)) {g_diagCapacity++;return;}
    if(!SP2LEMASlopeAllows(d)) {g_diagSlope++;return;}
+   if(!SP2LExtensionAllows(d)) {g_diagExtension++;return;}
    if(MaxSpreadPoints>0 && (int)SymbolInfoInteger(_Symbol,SYMBOL_SPREAD)>MaxSpreadPoints)
    {g_diagSpread++;return;}
    g_diagEligible++; // trade submission may still fail for other reasons
@@ -989,7 +1012,8 @@ void OnTick()
    if(slots>0)
    {
       int engine=ENGINE_PB,dir=GetSignal(engine);
-      if(dir!=0 && (engine!=ENGINE_SP2L || SP2LEMASlopeAllows(dir)))
+      if(dir!=0 && (engine!=ENGINE_SP2L ||
+         (SP2LEMASlopeAllows(dir) && SP2LExtensionAllows(dir))))
          OpenTrades(dir,engine,MathMin(TradesPerSignal,slots));
    }
    ShowStats();

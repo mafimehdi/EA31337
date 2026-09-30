@@ -10,7 +10,7 @@ reference = dict(line.split('=', 1) for line in
                  (root / 'sets/goldfusion_spike_signals_2026/more_minbodyratio_0_45.set').read_text().splitlines())
 inputs = dict(re.findall(r'^input\s+\w+\s+(\w+)\s*=\s*([^;]+);', mq5, re.M))
 assert len(reference) == 53
-assert len(inputs) == 56
+assert len(inputs) == 58
 assert {k: inputs[k] for k in ("SP2L_UseEMASlope", "SP2L_EMASlopeBars", "SP2L_MinSlopeATR")} == {
     "SP2L_UseEMASlope": "false", "SP2L_EMASlopeBars": "4", "SP2L_MinSlopeATR": "0.2"}
 named = {'SignalMode': {'2': 'MODE_BOTH'}, 'BB_FilterMode': {'2': 'BB_BOTH'},
@@ -33,5 +33,6 @@ assert 'OrderCalcProfit(' in mq5 and 'SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK
 assert 'ACCOUNT_MARGIN_MODE_RETAIL_HEDGING' in mq5
 print('MT5 default inputs match approved .45 SET; signals/reversal logic match supplied MT4 source.')
 
-assert 'if(dir!=0 && (engine!=ENGINE_SP2L || SP2LEMASlopeAllows(dir)))' in mq5
+assert 'SP2LEMASlopeAllows(dir) && SP2LExtensionAllows(dir)' in mq5
+assert 'SP2L_UseMaxExtension=false;' in mq5
 assert 'dir*(now-past)>=SP2L_MinSlopeATR*atr' in mq5
