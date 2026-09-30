@@ -788,6 +788,10 @@ int OnInit()
    Print("GoldFusion EA v6.2 MT5 init | ",EnumToString(SignalMode)," | lot=",FixedLot," | SL=",RiskUSD,"$ TP=",RewardUSD,"$ | Hedging only | account_leverage=",AccountInfoInteger(ACCOUNT_LEVERAGE)," free_margin=",DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE),2));
    return(INIT_SUCCEEDED);
 }
+int g_diagBars=0,g_diagOutside=0,g_diagBase=0,g_diagNoGap=0,g_diagNoTrend=0;
+int g_diagUT=0,g_diagBB=0,g_diagRSI=0,g_diagFiltered=0;
+int g_diagCapacity=0,g_diagDaily=0,g_diagCooldown=0,g_diagSpread=0,g_diagEligible=0;
+
 void OnDeinit(const int reason)
 {
    Print("[EXIT_SUMMARY] Closed positions tracked since EA start; net includes profit, swap, commission and fees.");
@@ -796,9 +800,136 @@ void OnDeinit(const int reason)
          Print("[EXIT_SUMMARY] engine=",e==ENGINE_SP2L ? "SP2L" : "PB",
                " category=",ExitName(k)," count=",g_exitCounts[e][k],
                " net_usd=",DoubleToString(g_exitNet[e][k],2));
+   Print("[ENTRY_DIAG] SP2L-only closed bars after warmup/reversal gate=",g_diagBars,
+         " outside_session=",g_diagOutside," core_pass=",g_diagBase,
+         " no_gap_counterfactual=",g_diagNoGap," no_trend_counterfactual=",g_diagNoTrend);
+   Print("[ENTRY_DIAG] core_pass_rejected_by_UT=",g_diagUT," BB=",g_diagBB,
+         " RSI=",g_diagRSI," any_filter=",g_diagFiltered,
+         " daily_limit=",g_diagDaily," cooldown=",g_diagCooldown,
+         " capacity=",g_diagCapacity," spread_signals=",g_diagSpread,
+         " eligible_signals=",g_diagEligible,
+         " (one count per bar; counterfactuals/filters overlap; not orders)");
    Comment("");
    IndicatorRelease(emaTrend); IndicatorRelease(emaPull);
    IndicatorRelease(atrHandle); IndicatorRelease(utAtrHandle); IndicatorRelease(rsiHandle);
+}
+bool DiagBullishSpike(int s,double atr,double &hh,bool requireGap)
+{
+   int n=SP2L_SpikeBars;
+   if(s+n+1>=g_bars) return(false);
+   hh=0;
+   double origin=MathMin(Low[s+n],Low[s+n-1]);
+   for(int i=s;i<s+n;i++)
+   {
+      if(Close[i]<=Open[i]) return(false);
+      double range=High[i]-Low[i];
+      if(range<=0 || (Close[i]-Open[i])/range<SP2L_MinBodyRatio) return(false);
+      if(High[i]>hh) hh=High[i];
+   }
+   if(hh-origin<SP2L_MinSpikeATR*atr) return(false);
+   if(requireGap)
+   {
+      bool gap=false;
+      for(int j=s;j+2<=s+n && !gap;j++) if(Low[j]>High[j+2]) gap=true;
+      if(!gap) return(false);
+   }
+   return(true);
+}
+bool DiagBearishSpike(int s,double atr,double &ll,bool requireGap)
+{
+   int n=SP2L_SpikeBars;
+   if(s+n+1>=g_bars) return(false);
+   ll=0;
+   double origin=MathMax(High[s+n],High[s+n-1]);
+   for(int i=s;i<s+n;i++)
+   {
+      if(Close[i]>=Open[i]) return(false);
+      double range=High[i]-Low[i];
+      if(range<=0 || (Open[i]-Close[i])/range<SP2L_MinBodyRatio) return(false);
+      if(ll==0 || Low[i]<ll) ll=Low[i];
+   }
+   if(origin-ll<SP2L_MinSpikeATR*atr) return(false);
+   if(requireGap)
+   {
+      bool gap=false;
+      for(int j=s;j+2<=s+n && !gap;j++) if(High[j]<Low[j+2]) gap=true;
+      if(!gap) return(false);
+   }
+   return(true);
+}
+int DiagSP2LCoreWith(bool requireGap,bool useTrend)
+{
+   double atr=SafeATR(ATR_Period,1);
+   if(atr<=0) return(0);
+   double ema200_1=EMA(TrendEMA,1);
+   int maxBack=SP2L_MaxLegBars+2;
+   if((!useTrend || (ema200_1!=0 && Close[1]>ema200_1)) && Close[1]>Open[1] && Close[1]>High[2])
+   {
+      for(int s=2;s<=maxBack;s++)
+      {
+         double hh=0;
+         if(!DiagBullishSpike(s,atr,hh,requireGap)) continue;
+         if(SP2L_StrictBreak && Close[1]<=hh) return(0);
+         double origin=MathMin(Low[s+SP2L_SpikeBars],Low[s+SP2L_SpikeBars-1]);
+         bool leg=false;
+         for(int k=s-1;k>=2;k--)
+         {
+            if(Low[k]<origin) break;
+            if(Low[k]<=Low[k+1]) { leg=true; break; }
+         }
+         if(leg && Low[1]>origin) return(+1);
+         return(0); // nearest spike only
+      }
+   }
+   if((!useTrend || (ema200_1!=0 && Close[1]<ema200_1)) && Close[1]<Open[1] && Close[1]<Low[2])
+   {
+      for(int s=2;s<=maxBack;s++)
+      {
+         double ll=0;
+         if(!DiagBearishSpike(s,atr,ll,requireGap)) continue;
+         if(SP2L_StrictBreak && Close[1]>=ll) return(0);
+         double origin=MathMax(High[s+SP2L_SpikeBars],High[s+SP2L_SpikeBars-1]);
+         bool leg=false;
+         for(int k=s-1;k>=2;k--)
+         {
+            if(High[k]>origin) break;
+            if(High[k]>=High[k+1]) { leg=true; break; }
+         }
+         if(leg && High[1]<origin) return(-1);
+         return(0);
+      }
+   }
+   return(0);
+}
+
+// Shadow diagnostics: observe closed-bar candidates; never place or modify orders.
+// Counterfactuals change only the specified condition for measurement, not trading.
+void DiagnoseSP2LBar()
+{
+   if(SignalMode!=MODE_SP2L) return; // diagnostics only for the SP2L-only experiment
+   g_diagBars++;
+   if(!InSession()) { g_diagOutside++;return; }
+   int d=SP2LCoreSignal();
+   if(d==0)
+   {
+      // These are separate counterfactuals, NOT additive counts of lost trades.
+      if(SP2L_RequireGap && DiagSP2LCoreWith(false,SP2L_UseTrendFilter)!=0) g_diagNoGap++;
+      if(SP2L_UseTrendFilter && DiagSP2LCoreWith(SP2L_RequireGap,false)!=0) g_diagNoTrend++;
+      return;
+   }
+   g_diagBase++;
+   bool ut=UTAllow(d),bb=BBAllow(d),rsi=RSIAllow(d);
+   if(!ut) g_diagUT++;
+   if(!bb) g_diagBB++;
+   if(!rsi) g_diagRSI++;
+   if(!ut || !bb || !rsi) { g_diagFiltered++;return; }
+   if(!DailyLimitsOK()) {g_diagDaily++;return;}
+   if(SL_CooldownBars>0 && g_slHitBar>=0 && g_barIndex-g_slHitBar<SL_CooldownBars)
+   {g_diagCooldown++;return;}
+   if(CountMyOrders()>=MathMax(1,MaxOpenTrades)) {g_diagCapacity++;return;}
+   if(MaxSpreadPoints>0 && (int)SymbolInfoInteger(_Symbol,SYMBOL_SPREAD)>MaxSpreadPoints)
+   {g_diagSpread++;return;}
+   g_diagEligible++; // trade submission may still fail for other reasons
 }
 void OnTick()
 {
@@ -831,6 +962,7 @@ void OnTick()
       if(closeBuys || closeSells)
       { CloseReversedPositions(closeBuys,closeSells);TrackClosedOrders();ShowStats();return; }
    }
+   DiagnoseSP2LBar();
    if(!InSession()) { ShowStats();return; }
    if(!DailyLimitsOK()) { ShowStats();return; }
    if(SL_CooldownBars>0 && g_slHitBar>=0 && g_barIndex-g_slHitBar<SL_CooldownBars)
