@@ -9,7 +9,10 @@ mq5 = (root / 'src/GoldFusion_EA_v2.mq5').read_text()
 reference = dict(line.split('=', 1) for line in
                  (root / 'sets/goldfusion_spike_signals_2026/more_minbodyratio_0_45.set').read_text().splitlines())
 inputs = dict(re.findall(r'^input\s+\w+\s+(\w+)\s*=\s*([^;]+);', mq5, re.M))
-assert len(inputs) == len(reference) == 53
+assert len(reference) == 53
+assert len(inputs) == 56
+assert {k: inputs[k] for k in ("SP2L_UseEMASlope", "SP2L_EMASlopeBars", "SP2L_MinSlopeATR")} == {
+    "SP2L_UseEMASlope": "false", "SP2L_EMASlopeBars": "4", "SP2L_MinSlopeATR": "0.2"}
 named = {'SignalMode': {'2': 'MODE_BOTH'}, 'BB_FilterMode': {'2': 'BB_BOTH'},
          'BE_RetreatMode': {'0': 'RETREAT_FULL_RESET'}, 'ReversalPrimary': {'1': 'REV_PULLBACK'}}
 for k, v in reference.items():
@@ -29,3 +32,6 @@ assert '[EXIT_DIAG]' in mq5 and '[EXIT_SUMMARY]' in mq5
 assert 'OrderCalcProfit(' in mq5 and 'SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE)' not in mq5
 assert 'ACCOUNT_MARGIN_MODE_RETAIL_HEDGING' in mq5
 print('MT5 default inputs match approved .45 SET; signals/reversal logic match supplied MT4 source.')
+
+assert 'if(dir!=0 && (engine!=ENGINE_SP2L || SP2LEMASlopeAllows(dir)))' in mq5
+assert 'dir*(now-past)>=SP2L_MinSlopeATR*atr' in mq5
