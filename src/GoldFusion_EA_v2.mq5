@@ -24,6 +24,10 @@ input double SP2L_MinSlopeATR=0.2;
 // Optional entry-only anti-chase gate; off preserves legacy signals.
 input bool SP2L_UseMaxExtension=false;
 input double SP2L_MaxExtensionATR=2.5;
+// Experimental entry-only continuation after an EMA50 pullback; off by default.
+// Available in SP2L-only mode, with SP2L taking priority if both fire.
+input bool UseContinuationEntry=false;
+input int ContinuationTouchBars=6;
 input bool UseUTFilter=true;
 input double UT_KeyValue=1.0;
 input int UT_ATRPeriod=14;
@@ -72,10 +76,14 @@ input int Slippage=30;
 
 #define ENGINE_PB 0
 #define ENGINE_SP2L 1
+#define ENGINE_CONT 2
 #define MAX_TRACKED 64
 MqlRates rates[];
 double opens[],highs[],lows[],closes[];
 int g_bars=0;
+int g_contTouchBar[2]={-1,-1};
+bool g_contInTouch[2]={false,false},g_contConsumed[2]={false,false};
+int g_contCandidate=0,g_contCandidates=0,g_contFiltered=0,g_contPassed=0;
 datetime g_lastStatsSecond=0,g_lastModifyLogMinute=0;
 int emaTrend=INVALID_HANDLE,emaPull=INVALID_HANDLE,atrHandle=INVALID_HANDLE,utAtrHandle=INVALID_HANDLE,rsiHandle=INVALID_HANDLE;
 datetime g_lastBarTime=0;
@@ -90,8 +98,8 @@ int g_failedModifyCount=0;
 #define EXIT_BUCKETS 7
 ulong g_exitIntentIds[MAX_TRACKED];
 int g_exitIntentKinds[MAX_TRACKED],g_exitIntentCount=0;
-int g_exitCounts[2][EXIT_BUCKETS];
-double g_exitNet[2][EXIT_BUCKETS];
+int g_exitCounts[3][EXIT_BUCKETS];
+double g_exitNet[3][EXIT_BUCKETS];
 // 0=initial SL, 1=BE/retreat SL, 2=trailing SL, 3=TP,
 // 4=reversal, 5=session, 6=other/unknown. These are diagnostic labels.
 string ExitName(int kind)
@@ -536,6 +544,40 @@ int GetSP2LSignal()
    if(d!=0 && UTAllow(d) && RSIAllow(d) && BBAllow(d)) return(d);
    return(0);
 }
+// Runs once on every closed bar, even outside session or at full capacity.
+// One touch episode can yield at most one breakout candidate. The touch bar
+// cannot itself be the breakout bar; only closed-bar prices are inspected.
+void UpdateContinuation()
+{
+   g_contCandidate=0;
+   if(!UseContinuationEntry || SignalMode!=MODE_SP2L || ContinuationTouchBars<1) return;
+   for(int i=0;i<2;i++)
+   {
+      int dir=i==0 ? 1 : -1;
+      double ema50=EMA(PullbackEMA,1);
+      if(ema50==0) continue;
+      bool touch=dir>0 ? Low[1]<=ema50 : High[1]>=ema50;
+      if(touch && !g_contInTouch[i])
+      { g_contTouchBar[i]=g_barIndex; g_contConsumed[i]=false; }
+      g_contInTouch[i]=touch;
+      if(g_contTouchBar[i]<0 || g_contConsumed[i]) continue;
+      int age=g_barIndex-g_contTouchBar[i];
+      if(age<1 || age>ContinuationTouchBars) continue;
+      double ema200=EMA(TrendEMA,1),old=EMA(TrendEMA,5);
+      double atr=SafeATR(ATR_Period,1);
+      if(ema200==0 || old==0 || atr<=0) continue;
+      bool trend=dir>0 ? (Close[1]>ema200 && ema200-old>=0.2*atr)
+                        : (Close[1]<ema200 && old-ema200>=0.2*atr);
+      bool breakout=dir>0 ? (Close[1]>Open[1] && Close[1]>High[2])
+                          : (Close[1]<Open[1] && Close[1]<Low[2]);
+      if(trend && breakout)
+      {
+         g_contConsumed[i]=true; // even a filtered/out-of-session candidate is not replayed
+         if(g_contCandidate==0) g_contCandidate=dir;
+         g_contCandidates++;
+      }
+   }
+}
 int GetSignal(int &engine)
 {
    engine=ENGINE_PB;
@@ -548,6 +590,13 @@ int GetSignal(int &engine)
    {
       int d=GetSP2LSignal();
       if(d!=0) { engine=ENGINE_SP2L; return(d); }
+   }
+   if(UseContinuationEntry && SignalMode==MODE_SP2L && g_contCandidate!=0)
+   {
+      int d=g_contCandidate;
+      if(UTAllow(d) && RSIAllow(d) && BBAllow(d))
+      { engine=ENGINE_CONT; g_contPassed++; return(d); }
+      g_contFiltered++;
    }
    return(0);
 }
@@ -623,7 +672,7 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
             " margin_initial=",DoubleToString(SymbolInfoDouble(_Symbol,SYMBOL_MARGIN_INITIAL),2));
       return(false);
    }
-   string comment=engine==ENGINE_SP2L ? "GF62 SP2L" : "GF62 PB";
+   string comment=engine==ENGINE_SP2L ? "GF62 SP2L" : (engine==ENGINE_CONT ? "GF62 CONT" : "GF62 PB");
    for(int attempt=0;attempt<3;attempt++)
    {
       if(!SymbolInfoTick(_Symbol,tick)) return(false);
@@ -635,7 +684,7 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
       {
          g_entriesToday++;
          // As in MT4, observe new positions during the next tracking pass.
-         Print("[SIGNAL ",seq,"/",total,"] engine=",engine==ENGINE_SP2L ? "SP2L" : "PB"," dir=",direction,
+         Print("[SIGNAL ",seq,"/",total,"] engine=",engine==ENGINE_SP2L ? "SP2L" : (engine==ENGINE_CONT ? "CONT" : "PB")," dir=",direction,
                " order=",trade.ResultOrder()," lot=",DoubleToString(lot,2)," SL=",RiskUSD,"$ TP=",RewardUSD,"$ | account/price=",DoubleToString(upu,4)," SL distance=",DoubleToString(slDist,_Digits));
          return(true);
       }
@@ -653,7 +702,7 @@ void OpenTrades(int direction,int engine,int count)
       if(MaxTradesPerDay>0 && g_entriesToday>=MaxTradesPerDay) break;
       if(OpenSingleTrade(direction,engine,i+1,count)) opened++;
    }
-   if(opened>0) Print("[BATCH] ",opened," trade(s) opened for one ",engine==ENGINE_SP2L ? "SP2L" : "PB"," signal");
+   if(opened>0) Print("[BATCH] ",opened," trade(s) opened for one ",engine==ENGINE_SP2L ? "SP2L" : (engine==ENGINE_CONT ? "CONT" : "PB")," signal");
 }
 // MT5 position tickets are distinct on hedging accounts; closed positions are
 // reconciled by their immutable POSITION_IDENTIFIER and history position id.
@@ -685,6 +734,7 @@ void TrackClosedOrders()
                entryTime=(datetime)HistoryDealGetInteger(d,DEAL_TIME);
                side=HistoryDealGetInteger(d,DEAL_TYPE)==DEAL_TYPE_BUY ? 1 : -1;
                if(StringFind(HistoryDealGetString(d,DEAL_COMMENT),"SP2L")>=0) eng=ENGINE_SP2L;
+               else if(StringFind(HistoryDealGetString(d,DEAL_COMMENT),"CONT")>=0) eng=ENGINE_CONT;
             }
             else if(phase==DEAL_ENTRY_OUT || phase==DEAL_ENTRY_OUT_BY || phase==DEAL_ENTRY_INOUT)
             {
@@ -717,7 +767,7 @@ void TrackClosedOrders()
             }
             g_exitCounts[eng][kind]++;
             g_exitNet[eng][kind]+=p;
-            Print("[EXIT_DIAG] position=",id," engine=",eng==ENGINE_SP2L ? "SP2L" : "PB",
+            Print("[EXIT_DIAG] position=",id," engine=",eng==ENGINE_SP2L ? "SP2L" : (eng==ENGINE_CONT ? "CONT" : "PB"),
                   " side=",side>0 ? "BUY" : "SELL",
                   " entry=",TimeToString(entryTime,TIME_DATE|TIME_SECONDS),"@",DoubleToString(entryPrice,_Digits),
                   " exit=",TimeToString(exitTime,TIME_DATE|TIME_SECONDS),"@",DoubleToString(exitPrice,_Digits),
@@ -728,7 +778,7 @@ void TrackClosedOrders()
             else if(p<0) { g_losses++;g_slHitBar=g_barIndex; }
             else g_breakevens++;
             if(eng==ENGINE_SP2L) { g_tradesSP++; if(p>0) g_winsSP++; }
-            else { g_tradesPB++; if(p>0) g_winsPB++; }
+            else if(eng==ENGINE_PB) { g_tradesPB++; if(p>0) g_winsPB++; }
          }
       }
       else Print("[!] Closed position ",id," not found in account history");
@@ -802,11 +852,13 @@ int g_diagCapacity=0,g_diagDaily=0,g_diagCooldown=0,g_diagSpread=0,g_diagEligibl
 void OnDeinit(const int reason)
 {
    Print("[EXIT_SUMMARY] Closed positions tracked since EA start; net includes profit, swap, commission and fees.");
-   for(int e=0;e<2;e++) for(int k=0;k<EXIT_BUCKETS;k++)
+   for(int e=0;e<3;e++) for(int k=0;k<EXIT_BUCKETS;k++)
       if(g_exitCounts[e][k]>0)
-         Print("[EXIT_SUMMARY] engine=",e==ENGINE_SP2L ? "SP2L" : "PB",
+         Print("[EXIT_SUMMARY] engine=",e==ENGINE_SP2L ? "SP2L" : (e==ENGINE_CONT ? "CONT" : "PB"),
                " category=",ExitName(k)," count=",g_exitCounts[e][k],
                " net_usd=",DoubleToString(g_exitNet[e][k],2));
+   Print("[CONT_DIAG] candidates=",g_contCandidates," filtered=",g_contFiltered,
+         " passed_when_entry_checked=",g_contPassed," (not orders; includes out-of-session candidates)");
    Print("[ENTRY_DIAG] SP2L-only closed bars after warmup/reversal gate=",g_diagBars,
          " outside_session=",g_diagOutside," core_pass=",g_diagBase,
          " no_gap_counterfactual=",g_diagNoGap," no_trend_counterfactual=",g_diagNoTrend);
@@ -983,6 +1035,7 @@ void OnTick()
    {
       g_lastBarTime=barTime;g_barIndex++;
       if(UseUTFilter) UpdateUTStop(1);
+      UpdateContinuation();
    }
    if(UseTimeFilter && CloseOutsideSession && CountMyOrders()>0 && !InSession())
    { CloseAllMyPositions();ShowStats();return; }

@@ -10,7 +10,7 @@ reference = dict(line.split('=', 1) for line in
                  (root / 'sets/goldfusion_spike_signals_2026/more_minbodyratio_0_45.set').read_text().splitlines())
 inputs = dict(re.findall(r'^input\s+\w+\s+(\w+)\s*=\s*([^;]+);', mq5, re.M))
 assert len(reference) == 53
-assert len(inputs) == 58
+assert len(inputs) == 60
 assert {k: inputs[k] for k in ("SP2L_UseEMASlope", "SP2L_EMASlopeBars", "SP2L_MinSlopeATR")} == {
     "SP2L_UseEMASlope": "false", "SP2L_EMASlopeBars": "4", "SP2L_MinSlopeATR": "0.2"}
 named = {'SignalMode': {'2': 'MODE_BOTH'}, 'BB_FilterMode': {'2': 'BB_BOTH'},
@@ -23,6 +23,15 @@ for k, v in reference.items():
 start, end = 'void UpdateUTStop(', '// Closing is independent of session'
 core4 = mq4[mq4.index(start):mq4.index(end)]
 core5 = mq5[mq5.index(start):mq5.index('bool CloseReversedPositions(', mq5.index(start))]
+core5 = core5[:core5.index('// Runs once on every closed bar')] + core5[core5.index('int GetSignal(int &engine)'): ]
+core5 = core5.replace('''   if(UseContinuationEntry && SignalMode==MODE_SP2L && g_contCandidate!=0)
+   {
+      int d=g_contCandidate;
+      if(UTAllow(d) && RSIAllow(d) && BBAllow(d))
+      { engine=ENGINE_CONT; g_contPassed++; return(d); }
+      g_contFiltered++;
+   }
+''', '')
 core4 = core4.replace('iRSI(_Symbol,PERIOD_CURRENT,RSI_Length,PRICE_CLOSE,1)', 'BufferAt(rsiHandle,1)')
 core4 = re.sub(r'\bBars\b', 'g_bars', core4)
 assert core4.rstrip() == core5.rstrip(), 'Closed-bar signal and reversal logic drifted from MT4'
@@ -36,3 +45,16 @@ print('MT5 default inputs match approved .45 SET; signals/reversal logic match s
 assert 'SP2LEMASlopeAllows(dir) && SP2LExtensionAllows(dir)' in mq5
 assert 'SP2L_UseMaxExtension=false;' in mq5
 assert 'dir*(now-past)>=SP2L_MinSlopeATR*atr' in mq5
+
+# New experimental path is opt-in, entry-only and compared against identical tester settings.
+assert inputs['UseContinuationEntry'] == 'false'
+assert inputs['ContinuationTouchBars'] == '6'
+assert 'UpdateContinuation();' in mq5 and 'engine=ENGINE_CONT' in mq5
+assert mq5.index('UpdateContinuation();') < mq5.index('if(!InSession()) { ShowStats();return; }')
+config_dir = root / 'sets/goldfusion_mt5_continuation_2026'
+off = (config_dir / 'goldfusion_mt5_sp2l_continuation_off_control.ini').read_text()
+on = (config_dir / 'goldfusion_mt5_sp2l_continuation_on.ini').read_text()
+assert on.replace('UseContinuationEntry=true||false||0||true||N',
+                  'UseContinuationEntry=false||false||0||true||N') == off
+assert 'SP2L_UseMaxExtension=false||' in on
+assert 'SP2L_MinBodyRatio=0.60||' in on
