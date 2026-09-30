@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//| GoldFusion_EA_v2.mq4 - v6.2 with confirmed reversal exits         |
+//| GoldFusion_EA_v2.mq4 - v6.3 independent initial SL modes          |
 //| Standalone XAUUSD EA; reversal only CLOSES existing positions.   |
 //+------------------------------------------------------------------+
 #property strict
@@ -36,6 +36,13 @@ input double RiskUSD=5.0;
 input double RewardUSD=5.0;
 input int MaxOpenTrades=3;
 input int TradesPerSignal=3;
+// Initial SL modes: either or both may be enabled. Both use the wider distance.
+input bool UseFixedDollarStop=true;
+input bool UseATRStopFloor=false;
+input double ATRStopMult=4.0;
+input int ATR_SL_Period=14;
+input bool UseSpreadStopBuffer=false;
+input bool BE_RetreatNoWorseThanEntry=false;
 input bool UseBreakEven=true;
 input double BE_TriggerUSD=1.5;
 input int BE_Extra_Points=20;
@@ -106,8 +113,23 @@ double NP(double price) { return(NormalizeDouble(price,_Digits)); }
 double DollarsPerPriceUnit(double lot)
 {
    double tickSize=MarketInfo(_Symbol,MODE_TICKSIZE), tickValue=MarketInfo(_Symbol,MODE_TICKVALUE);
-   if(tickSize<=0 || tickValue<=0) return(0.0);
-   return(lot*tickValue/tickSize);
+   if(tickSize>0 && tickValue>0) return(lot*tickValue/tickSize);
+   double contract=MarketInfo(_Symbol,MODE_LOTSIZE);
+   if(contract>0) return(lot*contract);
+   return(0.0);
+}
+double MinStopDist()
+{
+   double sl=MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point;
+   double fl=MarketInfo(_Symbol,MODE_FREEZELEVEL)*_Point;
+   double d=MathMax(sl,fl);
+   if(UseSpreadStopBuffer)
+   {
+      double spr=MarketInfo(_Symbol,MODE_SPREAD)*_Point;
+      d=MathMax(d,2*spr);
+   }
+   if(d<=0) d=20*_Point;
+   return(d);
 }
 double NormalizeLot(double lot)
 {
@@ -232,8 +254,7 @@ void CloseAllMyPositions()
 void ManageOneOrder(int ticket)
 {
    if(!OrderSelect(ticket,SELECT_BY_TICKET,MODE_TRADES) || OrderCloseTime()!=0) return;
-   double stopLevel=MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point;
-   if(stopLevel<=0) stopLevel=20*_Point;
+   double stopLevel=MinStopDist();
    double entry=OrderOpenPrice(), curSL=OrderStopLoss(), newSL=curSL;
    double upu=DollarsPerPriceUnit(OrderLots());
    if(upu<=0) return;
@@ -260,9 +281,10 @@ void ManageOneOrder(int ticket)
       if(UseBE_Retreat && beApplied && !trailOn && Bid<entry)
       {
          double retreatSL=(BE_RetreatMode==RETREAT_FULL_RESET) ? NP(entry-RiskUSD/upu) : NP(MathMax(entry-dist/upu,entry-RiskUSD/upu));
+         if(BE_RetreatNoWorseThanEntry && retreatSL<NP(entry)) retreatSL=NP(entry);
          if(retreatSL<newSL && Bid-retreatSL>=stopLevel) newSL=retreatSL;
       }
-      if(newSL!=curSL && !TryModify(ticket,entry,newSL,OrderTakeProfit())) Print("BUY #",ticket," OrderModify failed after retries");
+      if(MathAbs(newSL-curSL)>_Point/2 && !TryModify(ticket,entry,newSL,OrderTakeProfit())) Print("BUY #",ticket," OrderModify failed after retries");
    }
    else if(OrderType()==OP_SELL)
    {
@@ -283,9 +305,10 @@ void ManageOneOrder(int ticket)
       if(UseBE_Retreat && beApplied && !trailOn && Ask>entry)
       {
          double retreatSL=(BE_RetreatMode==RETREAT_FULL_RESET) ? NP(entry+RiskUSD/upu) : NP(MathMin(entry+dist/upu,entry+RiskUSD/upu));
+         if(BE_RetreatNoWorseThanEntry && retreatSL>NP(entry)) retreatSL=NP(entry);
          if((newSL==0 || retreatSL>newSL) && retreatSL-Ask>=stopLevel) newSL=retreatSL;
       }
-      if(newSL!=curSL && !TryModify(ticket,entry,newSL,OrderTakeProfit())) Print("SELL #",ticket," OrderModify failed after retries");
+      if(MathAbs(newSL-curSL)>_Point/2 && !TryModify(ticket,entry,newSL,OrderTakeProfit())) Print("SELL #",ticket," OrderModify failed after retries");
    }
 }
 void ManageAllPositions()
@@ -518,8 +541,10 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
    if(direction>0 && !AllowLong) return(false);
    if(direction<0 && !AllowShort) return(false);
    if(!TradingAllowed()) return(false);
-   if(RiskUSD<=0 || FixedLot<=0)
-   { Print("[!] RiskUSD and FixedLot must be > 0 -> entry skipped."); return(false); }
+   if(FixedLot<=0 || (UseFixedDollarStop && RiskUSD<=0) || (UseATRStopFloor && (ATRStopMult<=0 || ATR_SL_Period<=0)))
+   { Print("[!] Invalid lot or enabled SL mode parameters -> entry skipped."); return(false); }
+   if(!UseFixedDollarStop && !UseATRStopFloor)
+   { Print("[!] Both initial SL modes disabled -> entry skipped."); return(false); }
    RefreshRates();
    if(MaxSpreadPoints>0)
    {
@@ -528,12 +553,17 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
    }
    double lot=NormalizeLot(FixedLot), upu=DollarsPerPriceUnit(lot);
    if(upu<=0) { Print("[!] Tick value unavailable, entry skipped."); return(false); }
-   double slDist=RiskUSD/upu, tpDist=(RewardUSD>0) ? RewardUSD/upu : 0;
-   double stopLevel=MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point;
-   if(stopLevel<=0) stopLevel=20*_Point;
+   double slDist=UseFixedDollarStop ? RiskUSD/upu : 0;
+   double tpDist=(RewardUSD>0) ? RewardUSD/upu : 0;
+   if(UseATRStopFloor)
+   {
+      double atrFloor=ATRStopMult*SafeATR(ATR_SL_Period,1);
+      if(atrFloor>slDist) slDist=atrFloor;
+   }
+   double stopLevel=MinStopDist();
    if(slDist<stopLevel) slDist=stopLevel+_Point;
    if(tpDist>0 && tpDist<stopLevel) tpDist=stopLevel+_Point;
-   string comment=(engine==ENGINE_SP2L) ? "GF62 SP2L" : "GF62 PB";
+   string comment=(engine==ENGINE_SP2L) ? "GF63 SP2L" : "GF63 PB";
    int op=(direction>0) ? OP_BUY : OP_SELL;
    ResetLastError();
    double fm=AccountFreeMarginCheck(_Symbol,op,lot);
@@ -602,7 +632,7 @@ void TrackClosedOrders()
 void ShowStats()
 {
    if(!ShowStatsTable) return;
-   string s="[GoldFusion v6.2 | "+_Symbol+" "+EnumToString((ENUM_TIMEFRAMES)Period())+" | "+EnumToString(SignalMode)+"]\n";
+   string s="[GoldFusion v6.3 | "+_Symbol+" "+EnumToString((ENUM_TIMEFRAMES)Period())+" | "+EnumToString(SignalMode)+"]\n";
    s+=TimeToString(TimeCurrent(),TIME_DATE)+" (daily stats)\n";
    s+="Trades: "+IntegerToString(g_trades)+"  W:"+IntegerToString(g_wins)+"  L:"+IntegerToString(g_losses)+"  BE:"+IntegerToString(g_breakevens)+"\n";
    s+="Net$: "+DoubleToString(g_profitDollar,2)+"   PB "+IntegerToString(g_winsPB)+"/"+IntegerToString(g_tradesPB)+
@@ -614,11 +644,14 @@ void ShowStats()
    else if(!DailyLimitsOK()) status="DAILY LIMIT HIT";
    else if(SL_CooldownBars>0 && g_slHitBar>=0 && g_barIndex-g_slHitBar<SL_CooldownBars) status="SL cooldown";
    s+="Status: "+status+"   Spread: "+DoubleToString(MarketInfo(_Symbol,MODE_SPREAD),0)+" pts\n";
-   double lotN=NormalizeLot(FixedLot), upu=DollarsPerPriceUnit(lotN);
-   if(upu>0)
-      s+="FIXED: lot "+DoubleToString(lotN,2)+" | SL "+DoubleToString(RiskUSD,2)+"$ ("+DoubleToString(RiskUSD/upu,_Digits)+")"+
-         " | TP "+DoubleToString(RewardUSD,2)+"$ ("+DoubleToString(RewardUSD/upu,_Digits)+")";
-   else s+="FIXED: lot "+DoubleToString(lotN,2)+" | SL "+DoubleToString(RiskUSD,2)+"$ | TP "+DoubleToString(RewardUSD,2)+"$";
+   double lotN=NormalizeLot(FixedLot);
+   s+="Lot "+DoubleToString(lotN,2);
+   if(UseFixedDollarStop) s+=" | USD SL base "+DoubleToString(RiskUSD,2)+"$";
+   if(UseATRStopFloor) s+=" | ATR SL floor x"+DoubleToString(ATRStopMult,1);
+   s+=" | TP "+DoubleToString(RewardUSD,2)+"$";
+   s+=" | SL modes: "+(UseFixedDollarStop ? "USD" : "")+
+      (UseFixedDollarStop && UseATRStopFloor ? "+" : "")+(UseATRStopFloor ? "ATR floor" : "")+
+      (!UseFixedDollarStop && !UseATRStopFloor ? "OFF (no entry)" : "");
    string exits="";
    if(UseBreakEven)
    {
@@ -646,6 +679,12 @@ void ShowStats()
 }
 int OnInit()
 {
+   if(!UseFixedDollarStop && !UseATRStopFloor)
+   { Print("[!] Enable at least one initial SL mode."); return(INIT_PARAMETERS_INCORRECT); }
+   if(UseFixedDollarStop && RiskUSD<=0)
+   { Print("[!] RiskUSD must be > 0 when fixed-dollar SL is enabled."); return(INIT_PARAMETERS_INCORRECT); }
+   if(UseATRStopFloor && (ATRStopMult<=0 || ATR_SL_Period<=0))
+   { Print("[!] ATR stop settings must be > 0."); return(INIT_PARAMETERS_INCORRECT); }
    if(UseReversal && ((ReversalPrimary==REV_PULLBACK && SignalMode==MODE_SP2L) ||
                        (ReversalPrimary==REV_SP2L && SignalMode==MODE_PULLBACK)))
    {
@@ -657,10 +696,11 @@ int OnInit()
    if(Period()!=PERIOD_M15 && Period()!=PERIOD_M5)
       Print("[!] WARNING: GoldFusion is tuned for M15/M5; current timeframe is ",EnumToString((ENUM_TIMEFRAMES)Period()));
    CheckDailyReset(); g_lastBarTime=0;
-   double lotN=NormalizeLot(FixedLot), upu=DollarsPerPriceUnit(lotN);
-   Print("GoldFusion_EA v6.2 init on ",_Symbol," ",EnumToString((ENUM_TIMEFRAMES)Period()),
+   double lotN=NormalizeLot(FixedLot);
+   Print("GoldFusion_EA v6.3 init on ",_Symbol," ",EnumToString((ENUM_TIMEFRAMES)Period()),
          " | engines=",EnumToString(SignalMode)," | lot=",DoubleToString(lotN,2),
-         " | SL=",DoubleToString(RiskUSD,2),"$",(upu>0 ? " (= "+DoubleToString(RiskUSD/upu,_Digits)+" price)" : ""),
+         " | USD SL base=",(UseFixedDollarStop ? DoubleToString(RiskUSD,2)+"$" : "off"),
+         " | ATR SL floor=",(UseATRStopFloor ? "x"+DoubleToString(ATRStopMult,1) : "off"),
          " | TP=",DoubleToString(RewardUSD,2),"$",(upu>0 ? " (= "+DoubleToString(RewardUSD/upu,_Digits)+" price)" : ""),
          " | BE@",DoubleToString(BE_TriggerUSD,2),"$ retreat=",
          (UseBE_Retreat ? (BE_RetreatMode==RETREAT_FULL_RESET ? "reset" : DoubleToString(BE_RetreatDistUSD,2)+"$") : "off"),
