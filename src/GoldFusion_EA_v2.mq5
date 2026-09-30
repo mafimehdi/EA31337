@@ -33,6 +33,8 @@ input bool ContinuationExperimental=false;
 input double ContinuationRetraceATR=0.5;
 input double ContinuationImpulseATR=1.5;
 input int ContinuationWaitBars=3;
+// Observation only: explain each CONT candidate; never alters entry decisions.
+input bool ContinuationEntryDiagnostics=false;
 input bool UseUTFilter=true;
 input double UT_KeyValue=1.0;
 input int UT_ATRPeriod=14;
@@ -93,6 +95,8 @@ int g_contCandidate=0,g_contCandidates=0,g_contFiltered=0,g_contPassed=0;
 int g_expState[2]={0,0},g_expBar[2]={-1,-1},g_expImpulseBar[2]={-1,-1};
 double g_expExtreme[2]={0,0};
 int g_expShallow=0,g_expDeferred=0,g_expConfirmed=0;
+#define CONT_DIAG_BUCKETS 12
+int g_contReasons[CONT_DIAG_BUCKETS];
 datetime g_lastStatsSecond=0,g_lastModifyLogMinute=0;
 int emaTrend=INVALID_HANDLE,emaPull=INVALID_HANDLE,atrHandle=INVALID_HANDLE,utAtrHandle=INVALID_HANDLE,rsiHandle=INVALID_HANDLE;
 datetime g_lastBarTime=0;
@@ -930,6 +934,18 @@ void OnDeinit(const int reason)
                " net_usd=",DoubleToString(g_exitNet[e][k],2));
    Print("[CONT_EXPERIMENT] shallow_setups=",g_expShallow," impulse_deferred=",g_expDeferred,
          " confirmed_candidates=",g_expConfirmed);
+   if(ContinuationEntryDiagnostics)
+   {
+      string labels[CONT_DIAG_BUCKETS]={"REVERSAL_EXIT","OUTSIDE_SESSION","DAILY_LIMIT",
+         "SL_COOLDOWN","CAPACITY","SP2L_PRIORITY","UT_FILTER","RSI_FILTER",
+         "BB_FILTER","DIRECTION_DISABLED","ATTEMPT","SPREAD"};
+      int classified=0;
+      for(int i=0;i<CONT_DIAG_BUCKETS;i++)
+      { classified+=g_contReasons[i]; if(g_contReasons[i]>0)
+         Print("[CONT_PATH_SUMMARY] ",labels[i],"=",g_contReasons[i]); }
+      Print("[CONT_PATH_SUMMARY] classified=",classified,
+            " candidates=",g_contCandidates," (candidate counter can include both directions on one bar)");
+   }
    Print("[CONT_DIAG] candidates=",g_contCandidates," filtered=",g_contFiltered,
          " passed_when_entry_checked=",g_contPassed," (not orders; includes out-of-session candidates)");
    Print("[ENTRY_DIAG] SP2L-only closed bars after warmup/reversal gate=",g_diagBars,
@@ -1096,6 +1112,32 @@ void DiagnoseSP2LBar()
    {g_diagSpread++;return;}
    g_diagEligible++; // trade submission may still fail for other reasons
 }
+// Mirror the *existing* OnTick decision order. Read-only observations only;
+// ATTEMPT means order submission will be tried, not that any order filled.
+void DiagnoseContinuationCandidate(bool reversalGate)
+{
+   if(!ContinuationEntryDiagnostics || !UseContinuationEntry || SignalMode!=MODE_SP2L ||
+      g_contCandidate==0) return;
+   int d=g_contCandidate,reason=10;
+   if(reversalGate) reason=0;
+   else if(!InSession()) reason=1;
+   else if(!DailyLimitsOK()) reason=2;
+   else if(SL_CooldownBars>0 && g_slHitBar>=0 && g_barIndex-g_slHitBar<SL_CooldownBars) reason=3;
+   else if(CountMyOrders()>=MathMax(1,MaxOpenTrades)) reason=4;
+   else if(GetSP2LSignal()!=0) reason=5; // priority even if SP2L slope later rejects
+   else if(!UTAllow(d)) reason=6;
+   else if(!RSIAllow(d)) reason=7;
+   else if(!BBAllow(d)) reason=8;
+   else if((d>0 && !AllowLong) || (d<0 && !AllowShort)) reason=9;
+   else if(MaxSpreadPoints>0 && (int)SymbolInfoInteger(_Symbol,SYMBOL_SPREAD)>MaxSpreadPoints) reason=11;
+   g_contReasons[reason]++;
+   string labels[CONT_DIAG_BUCKETS]={"REVERSAL_EXIT","OUTSIDE_SESSION","DAILY_LIMIT",
+      "SL_COOLDOWN","CAPACITY","SP2L_PRIORITY","UT_FILTER","RSI_FILTER",
+      "BB_FILTER","DIRECTION_DISABLED","ATTEMPT","SPREAD"};
+   Print("[CONT_PATH] bar=",TimeToString(g_lastBarTime,TIME_DATE|TIME_MINUTES),
+         " dir=",d>0 ? "BUY" : "SELL"," close=",DoubleToString(Close[1],_Digits),
+         " reason=",labels[reason]," spread=",(int)SymbolInfoInteger(_Symbol,SYMBOL_SPREAD));
+}
 void OnTick()
 {
    CheckDailyReset(); TrackClosedOrders();
@@ -1126,8 +1168,10 @@ void OnTick()
       bool closeBuys=ReversalConfirmed(-1,pbVote,spVote);
       bool closeSells=ReversalConfirmed(+1,pbVote,spVote);
       if(closeBuys || closeSells)
-      { CloseReversedPositions(closeBuys,closeSells);TrackClosedOrders();ShowStats();return; }
+      { DiagnoseContinuationCandidate(true);
+        CloseReversedPositions(closeBuys,closeSells);TrackClosedOrders();ShowStats();return; }
    }
+   DiagnoseContinuationCandidate(false);
    DiagnoseSP2LBar();
    if(!InSession()) { ShowStats();return; }
    if(!DailyLimitsOK()) { ShowStats();return; }

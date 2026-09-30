@@ -38,3 +38,17 @@ The original `UseContinuationEntry=true` algorithm is not changed unless the
 new flag is enabled. Compare all three runs on the *same newly compiled EA*;
 count independent CONT batches and inspect fast-reversing entries, not only net
 profit. The numbers are an unoptimized hypothesis, not a live-trading preset.
+
+## Read-only CONT candidate-path diagnostics
+
+Compile the latest `src/GoldFusion_EA_v2.mq5` as `GoldFusion_EA_v2.ex5`, then
+run only `goldfusion_mt5_sp2l_continuation_diagnostics_on.ini` to inspect the
+previous EMA50 continuation strategy. It differs from `continuation_on.ini`
+only in `ContinuationEntryDiagnostics=true`. It does NOT enable the rejected
+shallow-retracement experiment. The `[CONT_PATH]` line attributes each
+candidate to the first blocking entry gate in the actual OnTick order, or
+`ATTEMPT` when execution is tried. `[BATCH]` identifies real filled batches;
+`ATTEMPT` alone does not prove an order was filled. `[CONT_PATH_SUMMARY]` totals
+are classifications per bar, not trades. Compare final balance 553.76 and
+135 positions to the earlier run; if different, stop and diagnose before
+changing any trading rule.

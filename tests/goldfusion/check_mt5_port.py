@@ -10,7 +10,7 @@ reference = dict(line.split('=', 1) for line in
                  (root / 'sets/goldfusion_spike_signals_2026/more_minbodyratio_0_45.set').read_text().splitlines())
 inputs = dict(re.findall(r'^input\s+\w+\s+(\w+)\s*=\s*([^;]+);', mq5, re.M))
 assert len(reference) == 53
-assert len(inputs) == 64
+assert len(inputs) == 65
 assert {k: inputs[k] for k in ("SP2L_UseEMASlope", "SP2L_EMASlopeBars", "SP2L_MinSlopeATR")} == {
     "SP2L_UseEMASlope": "false", "SP2L_EMASlopeBars": "4", "SP2L_MinSlopeATR": "0.2"}
 named = {'SignalMode': {'2': 'MODE_BOTH'}, 'BB_FilterMode': {'2': 'BB_BOTH'},
@@ -61,3 +61,12 @@ assert experimental.replace('ContinuationExperimental=true||false||0||true||N',
                             'ContinuationExperimental=false||false||0||true||N') == on
 assert 'SP2L_UseMaxExtension=false||' in on
 assert 'SP2L_MinBodyRatio=0.60||' in on
+
+assert inputs['ContinuationEntryDiagnostics'] == 'false'
+assert 'DiagnoseContinuationCandidate(false);' in mq5
+assert 'labels[reason]' in mq5
+base = (config_dir / 'goldfusion_mt5_sp2l_continuation_on.ini').read_text()
+verbose = (config_dir / 'goldfusion_mt5_sp2l_continuation_diagnostics_on.ini').read_text()
+assert verbose.replace('ContinuationEntryDiagnostics=true||false||0||true||N',
+                       'ContinuationEntryDiagnostics=false||false||0||true||N') == base
+assert 'ContinuationExperimental=false||' in verbose
