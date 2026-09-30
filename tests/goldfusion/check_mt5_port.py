@@ -10,7 +10,7 @@ reference = dict(line.split('=', 1) for line in
                  (root / 'sets/goldfusion_spike_signals_2026/more_minbodyratio_0_45.set').read_text().splitlines())
 inputs = dict(re.findall(r'^input\s+\w+\s+(\w+)\s*=\s*([^;]+);', mq5, re.M))
 assert len(reference) == 53
-assert len(inputs) == 60
+assert len(inputs) == 64
 assert {k: inputs[k] for k in ("SP2L_UseEMASlope", "SP2L_EMASlopeBars", "SP2L_MinSlopeATR")} == {
     "SP2L_UseEMASlope": "false", "SP2L_EMASlopeBars": "4", "SP2L_MinSlopeATR": "0.2"}
 named = {'SignalMode': {'2': 'MODE_BOTH'}, 'BB_FilterMode': {'2': 'BB_BOTH'},
@@ -23,7 +23,7 @@ for k, v in reference.items():
 start, end = 'void UpdateUTStop(', '// Closing is independent of session'
 core4 = mq4[mq4.index(start):mq4.index(end)]
 core5 = mq5[mq5.index(start):mq5.index('bool CloseReversedPositions(', mq5.index(start))]
-core5 = core5[:core5.index('// Runs once on every closed bar')] + core5[core5.index('int GetSignal(int &engine)'): ]
+core5 = core5[:core5.index('// Alternative closed-bar setup.')] + core5[core5.index('int GetSignal(int &engine)'): ]
 core5 = core5.replace('''   if(UseContinuationEntry && SignalMode==MODE_SP2L && g_contCandidate!=0)
    {
       int d=g_contCandidate;
@@ -56,5 +56,8 @@ off = (config_dir / 'goldfusion_mt5_sp2l_continuation_off_control.ini').read_tex
 on = (config_dir / 'goldfusion_mt5_sp2l_continuation_on.ini').read_text()
 assert on.replace('UseContinuationEntry=true||false||0||true||N',
                   'UseContinuationEntry=false||false||0||true||N') == off
+experimental = (config_dir / 'goldfusion_mt5_sp2l_continuation_experimental_on.ini').read_text()
+assert experimental.replace('ContinuationExperimental=true||false||0||true||N',
+                            'ContinuationExperimental=false||false||0||true||N') == on
 assert 'SP2L_UseMaxExtension=false||' in on
 assert 'SP2L_MinBodyRatio=0.60||' in on

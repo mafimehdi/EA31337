@@ -28,6 +28,11 @@ input double SP2L_MaxExtensionATR=2.5;
 // Available in SP2L-only mode, with SP2L taking priority if both fire.
 input bool UseContinuationEntry=false;
 input int ContinuationTouchBars=6;
+// Optional alternative CONT experiment; requires UseContinuationEntry=true.
+input bool ContinuationExperimental=false;
+input double ContinuationRetraceATR=0.5;
+input double ContinuationImpulseATR=1.5;
+input int ContinuationWaitBars=3;
 input bool UseUTFilter=true;
 input double UT_KeyValue=1.0;
 input int UT_ATRPeriod=14;
@@ -84,6 +89,10 @@ int g_bars=0;
 int g_contTouchBar[2]={-1,-1};
 bool g_contInTouch[2]={false,false},g_contConsumed[2]={false,false};
 int g_contCandidate=0,g_contCandidates=0,g_contFiltered=0,g_contPassed=0;
+// Per-direction closed-bar episode state for the alternative entry path.
+int g_expState[2]={0,0},g_expBar[2]={-1,-1},g_expImpulseBar[2]={-1,-1};
+double g_expExtreme[2]={0,0};
+int g_expShallow=0,g_expDeferred=0,g_expConfirmed=0;
 datetime g_lastStatsSecond=0,g_lastModifyLogMinute=0;
 int emaTrend=INVALID_HANDLE,emaPull=INVALID_HANDLE,atrHandle=INVALID_HANDLE,utAtrHandle=INVALID_HANDLE,rsiHandle=INVALID_HANDLE;
 datetime g_lastBarTime=0;
@@ -544,11 +553,73 @@ int GetSP2LSignal()
    if(d!=0 && UTAllow(d) && RSIAllow(d) && BBAllow(d)) return(d);
    return(0);
 }
+// Alternative closed-bar setup. State 0=idle, 1=armed, 2=wait for
+// counter-direction pullback after an oversized trigger, 3=wait for resume,
+// 4=consumed until price makes a fresh six-bar extreme. No tick data used.
+void UpdateExperimentalContinuation()
+{
+   g_contCandidate=0;
+   if(SignalMode!=MODE_SP2L || !UseContinuationEntry || ContinuationTouchBars<1 ||
+      ContinuationRetraceATR<=0 || ContinuationImpulseATR<=0 || ContinuationWaitBars<1) return;
+   double atr=SafeATR(ATR_Period,1),priorATR=SafeATR(ATR_Period,2);
+   if(atr<=0 || priorATR<=0) return;
+   double ema200=EMA(TrendEMA,1),old=EMA(TrendEMA,5);
+   if(ema200==0 || old==0) return;
+   for(int i=0;i<2;i++)
+   {
+      int dir=i==0 ? 1 : -1;
+      double extreme=dir>0 ? -DBL_MAX : DBL_MAX;
+      for(int j=2;j<2+ContinuationTouchBars;j++)
+         extreme=dir>0 ? MathMax(extreme,High[j]) : MathMin(extreme,Low[j]);
+      // An already-used episode cannot rearm until a NEW high/low is made.
+      if(g_expState[i]==4)
+      {
+         if(dir*(extreme-g_expExtreme[i])>0) g_expState[i]=0;
+         else continue;
+      }
+      bool retrace=dir>0 ? extreme-Low[1]>=ContinuationRetraceATR*atr
+                             : High[1]-extreme>=ContinuationRetraceATR*atr;
+      bool trend=dir>0 ? (Close[1]>ema200 && ema200-old>=0.2*atr)
+                        : (Close[1]<ema200 && old-ema200>=0.2*atr);
+      bool breakout=dir>0 ? (Close[1]>Open[1] && Close[1]>High[2])
+                          : (Close[1]<Open[1] && Close[1]<Low[2]);
+      if(g_expState[i]==0 && retrace && trend)
+      {
+         g_expState[i]=1; g_expBar[i]=g_barIndex; g_expExtreme[i]=extreme;
+         g_expShallow++;
+      }
+      if(g_expState[i]==0) continue;
+      if(g_barIndex-g_expBar[i]>ContinuationTouchBars || !trend)
+      { g_expState[i]=4; continue; }
+      if(g_expState[i]==2 || g_expState[i]==3)
+      {
+         if(g_barIndex-g_expImpulseBar[i]>ContinuationWaitBars)
+         { g_expState[i]=4; continue; }
+         bool counter=dir>0 ? Close[1]<Open[1] : Close[1]>Open[1];
+         if(g_expState[i]==2)
+         { if(counter) g_expState[i]=3; continue; }
+         if(breakout)
+         {
+            g_expState[i]=4;
+            if(g_contCandidate==0) g_contCandidate=dir;
+            g_contCandidates++; g_expConfirmed++;
+         }
+         continue;
+      }
+      if(g_barIndex<=g_expBar[i] || !breakout) continue;
+      if(High[1]-Low[1]>ContinuationImpulseATR*priorATR)
+      { g_expState[i]=2; g_expImpulseBar[i]=g_barIndex; g_expDeferred++; continue; }
+      g_expState[i]=4;
+      if(g_contCandidate==0) g_contCandidate=dir;
+      g_contCandidates++; g_expConfirmed++;
+   }
+}
 // Runs once on every closed bar, even outside session or at full capacity.
 // One touch episode can yield at most one breakout candidate. The touch bar
 // cannot itself be the breakout bar; only closed-bar prices are inspected.
 void UpdateContinuation()
 {
+   if(ContinuationExperimental) { UpdateExperimentalContinuation(); return; }
    g_contCandidate=0;
    if(!UseContinuationEntry || SignalMode!=MODE_SP2L || ContinuationTouchBars<1) return;
    for(int i=0;i<2;i++)
@@ -857,6 +928,8 @@ void OnDeinit(const int reason)
          Print("[EXIT_SUMMARY] engine=",e==ENGINE_SP2L ? "SP2L" : (e==ENGINE_CONT ? "CONT" : "PB"),
                " category=",ExitName(k)," count=",g_exitCounts[e][k],
                " net_usd=",DoubleToString(g_exitNet[e][k],2));
+   Print("[CONT_EXPERIMENT] shallow_setups=",g_expShallow," impulse_deferred=",g_expDeferred,
+         " confirmed_candidates=",g_expConfirmed);
    Print("[CONT_DIAG] candidates=",g_contCandidates," filtered=",g_contFiltered,
          " passed_when_entry_checked=",g_contPassed," (not orders; includes out-of-session candidates)");
    Print("[ENTRY_DIAG] SP2L-only closed bars after warmup/reversal gate=",g_diagBars,
