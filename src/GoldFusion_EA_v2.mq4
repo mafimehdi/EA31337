@@ -314,6 +314,7 @@ void ManageOneOrder(int ticket)
 void ManageAllPositions()
 {
    int tickets[MAX_TRACKED], n=0;
+   ArrayInitialize(tickets,0);
    for(int i=OrdersTotal()-1;i>=0 && n<MAX_TRACKED;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
@@ -696,7 +697,7 @@ int OnInit()
    if(Period()!=PERIOD_M15 && Period()!=PERIOD_M5)
       Print("[!] WARNING: GoldFusion is tuned for M15/M5; current timeframe is ",EnumToString((ENUM_TIMEFRAMES)Period()));
    CheckDailyReset(); g_lastBarTime=0;
-   double lotN=NormalizeLot(FixedLot);
+   double lotN=NormalizeLot(FixedLot), upu=DollarsPerPriceUnit(lotN);
    Print("GoldFusion_EA v6.3 init on ",_Symbol," ",EnumToString((ENUM_TIMEFRAMES)Period()),
          " | engines=",EnumToString(SignalMode)," | lot=",DoubleToString(lotN,2),
          " | USD SL base=",(UseFixedDollarStop ? DoubleToString(RiskUSD,2)+"$" : "off"),
