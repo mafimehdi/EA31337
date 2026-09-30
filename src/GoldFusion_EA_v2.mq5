@@ -35,6 +35,8 @@ input double ContinuationImpulseATR=1.5;
 input int ContinuationWaitBars=3;
 // Observation only: explain each CONT candidate; never alters entry decisions.
 input bool ContinuationEntryDiagnostics=false;
+// Optional entry-only session range breakout/retest experiment (default off).
+input bool UseSessionRetestEntry=false;
 input bool UseUTFilter=true;
 input double UT_KeyValue=1.0;
 input int UT_ATRPeriod=14;
@@ -84,6 +86,7 @@ input int Slippage=30;
 #define ENGINE_PB 0
 #define ENGINE_SP2L 1
 #define ENGINE_CONT 2
+#define ENGINE_RETEST 3
 #define MAX_TRACKED 64
 MqlRates rates[];
 double opens[],highs[],lows[],closes[];
@@ -97,6 +100,10 @@ double g_expExtreme[2]={0,0};
 int g_expShallow=0,g_expDeferred=0,g_expConfirmed=0;
 #define CONT_DIAG_BUCKETS 12
 int g_contReasons[CONT_DIAG_BUCKETS];
+int g_retestDay=0,g_retestCount=0,g_retestDirection=0,g_retestBreakBar=-1,g_retestCandidate=0;
+double g_retestHigh[6],g_retestLow[6];
+double g_retestLevel=0,g_retestLastLevel[2];
+int g_retestBreaks=0,g_retestConfirms=0;
 datetime g_lastStatsSecond=0,g_lastModifyLogMinute=0;
 int emaTrend=INVALID_HANDLE,emaPull=INVALID_HANDLE,atrHandle=INVALID_HANDLE,utAtrHandle=INVALID_HANDLE,rsiHandle=INVALID_HANDLE;
 datetime g_lastBarTime=0;
@@ -111,8 +118,8 @@ int g_failedModifyCount=0;
 #define EXIT_BUCKETS 7
 ulong g_exitIntentIds[MAX_TRACKED];
 int g_exitIntentKinds[MAX_TRACKED],g_exitIntentCount=0;
-int g_exitCounts[3][EXIT_BUCKETS];
-double g_exitNet[3][EXIT_BUCKETS];
+int g_exitCounts[4][EXIT_BUCKETS];
+double g_exitNet[4][EXIT_BUCKETS];
 // 0=initial SL, 1=BE/retreat SL, 2=trailing SL, 3=TP,
 // 4=reversal, 5=session, 6=other/unknown. These are diagnostic labels.
 string ExitName(int kind)
@@ -653,6 +660,65 @@ void UpdateContinuation()
       }
    }
 }
+// The previous completed candle must belong to the current trading
+// session. A six-candle completed session range precedes each breakout.
+// This is strictly an entry path; reversal voting is unchanged.
+void UpdateSessionRetest()
+{
+   g_retestCandidate=0;
+   if(!UseSessionRetestEntry || SignalMode!=MODE_SP2L) return;
+   MqlDateTime now,closed;
+   TimeToStruct(g_lastBarTime,now);
+   TimeToStruct(rates[1].time,closed);
+   int day=now.year*10000+now.mon*100+now.day;
+   if(day!=g_retestDay)
+   { g_retestDay=day;g_retestCount=0;g_retestDirection=0;
+     g_retestLastLevel[0]=0;g_retestLastLevel[1]=0; }
+   // InSession uses the exact existing DST/session-hour configuration.
+   if(!InSession() || closed.year!=now.year || closed.mon!=now.mon || closed.day!=now.day)
+      return;
+   int startH=SessionStartHour;
+   if(DST_Mode==3 || (DST_Mode==1 && IsWinterDST())) startH=(startH+23)%24;
+   if(UseTimeFilter && closed.hour<startH) return;
+   if(g_retestDirection!=0)
+   {
+      int age=g_barIndex-g_retestBreakBar,d=g_retestDirection;
+      if(age>4) g_retestDirection=0;
+      else if(age>=1)
+      {
+         bool invalid=d>0 ? Close[1]<g_retestLevel : Close[1]>g_retestLevel;
+         bool retest=d>0 ? (Low[1]<=g_retestLevel && Close[1]>g_retestLevel && Close[1]>Open[1])
+                         : (High[1]>=g_retestLevel && Close[1]<g_retestLevel && Close[1]<Open[1]);
+         if(invalid) g_retestDirection=0;
+         else if(retest)
+         { g_retestCandidate=d; g_retestConfirms++; g_retestDirection=0;
+           Print("[RETEST_CANDIDATE] bar=",TimeToString(g_lastBarTime,TIME_DATE|TIME_MINUTES),
+                 " dir=",d," level=",DoubleToString(g_retestLevel,_Digits)); }
+      }
+   }
+   // Detect break only against the six PREVIOUS completed session candles.
+   if(g_retestCount==6 && g_retestDirection==0 && g_retestCandidate==0)
+   {
+      double hh=g_retestHigh[0],ll=g_retestLow[0];
+      for(int i=1;i<6;i++) { hh=MathMax(hh,g_retestHigh[i]);ll=MathMin(ll,g_retestLow[i]); }
+      double atr=SafeATR(ATR_Period,1),e=EMA(TrendEMA,1),past=EMA(TrendEMA,5);
+      if(atr>0 && e!=0 && past!=0)
+      {
+         int d=0;double level=0;
+         if(Close[1]>hh && Close[1]>e && e-past>=0.2*atr &&
+            (g_retestLastLevel[0]==0 || hh>g_retestLastLevel[0])) { d=1;level=hh; }
+         else if(Close[1]<ll && Close[1]<e && past-e>=0.2*atr &&
+            (g_retestLastLevel[1]==0 || ll<g_retestLastLevel[1])) { d=-1;level=ll; }
+         if(d!=0)
+         { g_retestDirection=d;g_retestLevel=level;g_retestBreakBar=g_barIndex;
+           g_retestLastLevel[d>0 ? 0 : 1]=level;g_retestBreaks++; }
+      }
+   }
+   // Keep the six most recent completed candles of THIS session only.
+   for(int i=5;i>0;i--) {g_retestHigh[i]=g_retestHigh[i-1];g_retestLow[i]=g_retestLow[i-1];}
+   g_retestHigh[0]=High[1];g_retestLow[0]=Low[1];
+   if(g_retestCount<6) g_retestCount++;
+}
 int GetSignal(int &engine)
 {
    engine=ENGINE_PB;
@@ -672,6 +738,12 @@ int GetSignal(int &engine)
       if(UTAllow(d) && RSIAllow(d) && BBAllow(d))
       { engine=ENGINE_CONT; g_contPassed++; return(d); }
       g_contFiltered++;
+   }
+   if(UseSessionRetestEntry && SignalMode==MODE_SP2L && g_retestCandidate!=0)
+   {
+      int d=g_retestCandidate;
+      if(UTAllow(d) && RSIAllow(d) && BBAllow(d))
+      { engine=ENGINE_RETEST; return(d); }
    }
    return(0);
 }
@@ -747,7 +819,7 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
             " margin_initial=",DoubleToString(SymbolInfoDouble(_Symbol,SYMBOL_MARGIN_INITIAL),2));
       return(false);
    }
-   string comment=engine==ENGINE_SP2L ? "GF62 SP2L" : (engine==ENGINE_CONT ? "GF62 CONT" : "GF62 PB");
+   string comment=engine==ENGINE_SP2L ? "GF62 SP2L" : (engine==ENGINE_CONT ? "GF62 CONT" : (engine==ENGINE_RETEST ? "GF62 RETEST" : "GF62 PB"));
    for(int attempt=0;attempt<3;attempt++)
    {
       if(!SymbolInfoTick(_Symbol,tick)) return(false);
@@ -759,7 +831,7 @@ bool OpenSingleTrade(int direction,int engine,int seq,int total)
       {
          g_entriesToday++;
          // As in MT4, observe new positions during the next tracking pass.
-         Print("[SIGNAL ",seq,"/",total,"] engine=",engine==ENGINE_SP2L ? "SP2L" : (engine==ENGINE_CONT ? "CONT" : "PB")," dir=",direction,
+         Print("[SIGNAL ",seq,"/",total,"] engine=",engine==ENGINE_SP2L ? "SP2L" : (engine==ENGINE_CONT ? "CONT" : (engine==ENGINE_RETEST ? "RETEST" : "PB"))," dir=",direction,
                " order=",trade.ResultOrder()," lot=",DoubleToString(lot,2)," SL=",RiskUSD,"$ TP=",RewardUSD,"$ | account/price=",DoubleToString(upu,4)," SL distance=",DoubleToString(slDist,_Digits));
          return(true);
       }
@@ -777,7 +849,7 @@ void OpenTrades(int direction,int engine,int count)
       if(MaxTradesPerDay>0 && g_entriesToday>=MaxTradesPerDay) break;
       if(OpenSingleTrade(direction,engine,i+1,count)) opened++;
    }
-   if(opened>0) Print("[BATCH] ",opened," trade(s) opened for one ",engine==ENGINE_SP2L ? "SP2L" : (engine==ENGINE_CONT ? "CONT" : "PB")," signal");
+   if(opened>0) Print("[BATCH] ",opened," trade(s) opened for one ",engine==ENGINE_SP2L ? "SP2L" : (engine==ENGINE_CONT ? "CONT" : (engine==ENGINE_RETEST ? "RETEST" : "PB"))," signal");
 }
 // MT5 position tickets are distinct on hedging accounts; closed positions are
 // reconciled by their immutable POSITION_IDENTIFIER and history position id.
@@ -810,6 +882,7 @@ void TrackClosedOrders()
                side=HistoryDealGetInteger(d,DEAL_TYPE)==DEAL_TYPE_BUY ? 1 : -1;
                if(StringFind(HistoryDealGetString(d,DEAL_COMMENT),"SP2L")>=0) eng=ENGINE_SP2L;
                else if(StringFind(HistoryDealGetString(d,DEAL_COMMENT),"CONT")>=0) eng=ENGINE_CONT;
+               else if(StringFind(HistoryDealGetString(d,DEAL_COMMENT),"RETEST")>=0) eng=ENGINE_RETEST;
             }
             else if(phase==DEAL_ENTRY_OUT || phase==DEAL_ENTRY_OUT_BY || phase==DEAL_ENTRY_INOUT)
             {
@@ -842,7 +915,7 @@ void TrackClosedOrders()
             }
             g_exitCounts[eng][kind]++;
             g_exitNet[eng][kind]+=p;
-            Print("[EXIT_DIAG] position=",id," engine=",eng==ENGINE_SP2L ? "SP2L" : (eng==ENGINE_CONT ? "CONT" : "PB"),
+            Print("[EXIT_DIAG] position=",id," engine=",eng==ENGINE_SP2L ? "SP2L" : (eng==ENGINE_CONT ? "CONT" : (eng==ENGINE_RETEST ? "RETEST" : "PB")),
                   " side=",side>0 ? "BUY" : "SELL",
                   " entry=",TimeToString(entryTime,TIME_DATE|TIME_SECONDS),"@",DoubleToString(entryPrice,_Digits),
                   " exit=",TimeToString(exitTime,TIME_DATE|TIME_SECONDS),"@",DoubleToString(exitPrice,_Digits),
@@ -927,11 +1000,13 @@ int g_diagCapacity=0,g_diagDaily=0,g_diagCooldown=0,g_diagSpread=0,g_diagEligibl
 void OnDeinit(const int reason)
 {
    Print("[EXIT_SUMMARY] Closed positions tracked since EA start; net includes profit, swap, commission and fees.");
-   for(int e=0;e<3;e++) for(int k=0;k<EXIT_BUCKETS;k++)
+   for(int e=0;e<4;e++) for(int k=0;k<EXIT_BUCKETS;k++)
       if(g_exitCounts[e][k]>0)
-         Print("[EXIT_SUMMARY] engine=",e==ENGINE_SP2L ? "SP2L" : (e==ENGINE_CONT ? "CONT" : "PB"),
+         Print("[EXIT_SUMMARY] engine=",e==ENGINE_SP2L ? "SP2L" : (e==ENGINE_CONT ? "CONT" : (e==ENGINE_RETEST ? "RETEST" : "PB")),
                " category=",ExitName(k)," count=",g_exitCounts[e][k],
                " net_usd=",DoubleToString(g_exitNet[e][k],2));
+   Print("[RETEST_SUMMARY] breaks=",g_retestBreaks," retest_candidates=",g_retestConfirms,
+         " (not filled orders; count [BATCH] engine=RETEST separately)");
    Print("[CONT_EXPERIMENT] shallow_setups=",g_expShallow," impulse_deferred=",g_expDeferred,
          " confirmed_candidates=",g_expConfirmed);
    if(ContinuationEntryDiagnostics)
@@ -1151,6 +1226,7 @@ void OnTick()
       g_lastBarTime=barTime;g_barIndex++;
       if(UseUTFilter) UpdateUTStop(1);
       UpdateContinuation();
+      UpdateSessionRetest();
    }
    if(UseTimeFilter && CloseOutsideSession && CountMyOrders()>0 && !InSession())
    { CloseAllMyPositions();ShowStats();return; }

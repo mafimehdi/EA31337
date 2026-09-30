@@ -52,3 +52,22 @@ candidate to the first blocking entry gate in the actual OnTick order, or
 are classifications per bar, not trades. Compare final balance 553.76 and
 135 positions to the earlier run; if different, stop and diagnose before
 changing any trading rule.
+
+## Fourth run: session range breakout / retest (opt-in)
+
+`goldfusion_mt5_sp2l_session_retest_on.ini` differs from `continuation_on.ini`
+only in `UseSessionRetestEntry=true`. The former still keeps `CONT` enabled and
+`ContinuationExperimental=false`; SP2L takes priority over CONT, which takes
+priority over RETEST on a coincident bar. Once six closed M15 candles from the
+current 15:00–20:00 broker session are available, a close beyond their high or
+low, in the existing EMA200 0.2 ATR / four-bar trend direction, arms a level.
+No order opens on the breakout. Within the next four completed candles, a
+price touch of that level plus a close back beyond it in the breakout direction
+can produce one candidate. A close across the level against the breakout, an
+expired window or the session ending cancels the opportunity. One level is
+used at most once; a subsequent breakout must exceed the previous used level.
+UT/BB/RSI, the same order management and exit-only reversal remain unchanged.
+`[RETEST_CANDIDATE]` is not an order; count `[BATCH] ... RETEST` for fills.
+Run only this new configuration with the newly compiled EA and compare it to
+the established 45 independent batches, +$53.76 and 3.57% equity drawdown.
+Do not treat an increase in signal count alone as a success.

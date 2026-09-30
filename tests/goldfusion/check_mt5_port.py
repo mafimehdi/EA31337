@@ -10,7 +10,7 @@ reference = dict(line.split('=', 1) for line in
                  (root / 'sets/goldfusion_spike_signals_2026/more_minbodyratio_0_45.set').read_text().splitlines())
 inputs = dict(re.findall(r'^input\s+\w+\s+(\w+)\s*=\s*([^;]+);', mq5, re.M))
 assert len(reference) == 53
-assert len(inputs) == 65
+assert len(inputs) == 66
 assert {k: inputs[k] for k in ("SP2L_UseEMASlope", "SP2L_EMASlopeBars", "SP2L_MinSlopeATR")} == {
     "SP2L_UseEMASlope": "false", "SP2L_EMASlopeBars": "4", "SP2L_MinSlopeATR": "0.2"}
 named = {'SignalMode': {'2': 'MODE_BOTH'}, 'BB_FilterMode': {'2': 'BB_BOTH'},
@@ -32,6 +32,13 @@ core5 = core5.replace('''   if(UseContinuationEntry && SignalMode==MODE_SP2L && 
       g_contFiltered++;
    }
 ''', '')
+core5 = core5.replace("""   if(UseSessionRetestEntry && SignalMode==MODE_SP2L && g_retestCandidate!=0)
+   {
+      int d=g_retestCandidate;
+      if(UTAllow(d) && RSIAllow(d) && BBAllow(d))
+      { engine=ENGINE_RETEST; return(d); }
+   }
+""", '')
 core4 = core4.replace('iRSI(_Symbol,PERIOD_CURRENT,RSI_Length,PRICE_CLOSE,1)', 'BufferAt(rsiHandle,1)')
 core4 = re.sub(r'\bBars\b', 'g_bars', core4)
 assert core4.rstrip() == core5.rstrip(), 'Closed-bar signal and reversal logic drifted from MT4'
@@ -70,3 +77,12 @@ verbose = (config_dir / 'goldfusion_mt5_sp2l_continuation_diagnostics_on.ini').r
 assert verbose.replace('ContinuationEntryDiagnostics=true||false||0||true||N',
                        'ContinuationEntryDiagnostics=false||false||0||true||N') == base
 assert 'ContinuationExperimental=false||' in verbose
+
+assert inputs['UseSessionRetestEntry'] == 'false'
+assert 'UpdateSessionRetest();' in mq5
+assert mq5.index('UpdateSessionRetest();') < mq5.index('if(!InSession()) { ShowStats();return; }')
+
+base=(config_dir/'goldfusion_mt5_sp2l_continuation_on.ini').read_text()
+retest=(config_dir/'goldfusion_mt5_sp2l_session_retest_on.ini').read_text()
+assert retest.replace('UseSessionRetestEntry=true||false||0||true||N',
+                      'UseSessionRetestEntry=false||false||0||true||N')==base
