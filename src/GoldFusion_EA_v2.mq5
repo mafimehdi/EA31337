@@ -35,6 +35,8 @@ input double ContinuationImpulseATR=1.5;
 input int ContinuationWaitBars=3;
 // Observation only: explain each CONT candidate; never alters entry decisions.
 input bool ContinuationEntryDiagnostics=false;
+// Experimental: bypass BB only for SELL entries from CONT; never affects other engines or exits.
+input bool ContinuationSellBypassBB=false;
 // Optional entry-only session range breakout/retest experiment (default off).
 input bool UseSessionRetestEntry=false;
 input bool UseUTFilter=true;
@@ -735,7 +737,7 @@ int GetSignal(int &engine)
    if(UseContinuationEntry && SignalMode==MODE_SP2L && g_contCandidate!=0)
    {
       int d=g_contCandidate;
-      if(UTAllow(d) && RSIAllow(d) && BBAllow(d))
+      if(UTAllow(d) && RSIAllow(d) && ((d<0 && ContinuationSellBypassBB) || BBAllow(d)))
       { engine=ENGINE_CONT; g_contPassed++; return(d); }
       g_contFiltered++;
    }
@@ -1202,7 +1204,7 @@ void DiagnoseContinuationCandidate(bool reversalGate)
    else if(GetSP2LSignal()!=0) reason=5; // priority even if SP2L slope later rejects
    else if(!UTAllow(d)) reason=6;
    else if(!RSIAllow(d)) reason=7;
-   else if(!BBAllow(d)) reason=8;
+   else if(!(d<0 && ContinuationSellBypassBB) && !BBAllow(d)) reason=8;
    else if((d>0 && !AllowLong) || (d<0 && !AllowShort)) reason=9;
    else if(MaxSpreadPoints>0 && (int)SymbolInfoInteger(_Symbol,SYMBOL_SPREAD)>MaxSpreadPoints) reason=11;
    g_contReasons[reason]++;

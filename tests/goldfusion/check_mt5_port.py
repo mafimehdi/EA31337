@@ -10,7 +10,7 @@ reference = dict(line.split('=', 1) for line in
                  (root / 'sets/goldfusion_spike_signals_2026/more_minbodyratio_0_45.set').read_text().splitlines())
 inputs = dict(re.findall(r'^input\s+\w+\s+(\w+)\s*=\s*([^;]+);', mq5, re.M))
 assert len(reference) == 53
-assert len(inputs) == 66
+assert len(inputs) == 67
 assert {k: inputs[k] for k in ("SP2L_UseEMASlope", "SP2L_EMASlopeBars", "SP2L_MinSlopeATR")} == {
     "SP2L_UseEMASlope": "false", "SP2L_EMASlopeBars": "4", "SP2L_MinSlopeATR": "0.2"}
 named = {'SignalMode': {'2': 'MODE_BOTH'}, 'BB_FilterMode': {'2': 'BB_BOTH'},
@@ -27,7 +27,7 @@ core5 = core5[:core5.index('// Alternative closed-bar setup.')] + core5[core5.in
 core5 = core5.replace('''   if(UseContinuationEntry && SignalMode==MODE_SP2L && g_contCandidate!=0)
    {
       int d=g_contCandidate;
-      if(UTAllow(d) && RSIAllow(d) && BBAllow(d))
+      if(UTAllow(d) && RSIAllow(d) && ((d<0 && ContinuationSellBypassBB) || BBAllow(d)))
       { engine=ENGINE_CONT; g_contPassed++; return(d); }
       g_contFiltered++;
    }
@@ -86,3 +86,10 @@ base=(config_dir/'goldfusion_mt5_sp2l_continuation_on.ini').read_text()
 retest=(config_dir/'goldfusion_mt5_sp2l_session_retest_on.ini').read_text()
 assert retest.replace('UseSessionRetestEntry=true||false||0||true||N',
                       'UseSessionRetestEntry=false||false||0||true||N')==base
+
+assert inputs['ContinuationSellBypassBB'] == 'false'
+assert '((d<0 && ContinuationSellBypassBB) || BBAllow(d))' in mq5
+assert '!(d<0 && ContinuationSellBypassBB) && !BBAllow(d)' in mq5
+trial=(config_dir/'goldfusion_mt5_sp2l_continuation_sell_bb_bypass_on.ini').read_text()
+assert trial.replace('ContinuationSellBypassBB=true||false||0||true||N',
+                     'ContinuationSellBypassBB=false||false||0||true||N')==on

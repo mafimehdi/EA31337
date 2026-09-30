@@ -71,3 +71,17 @@ UT/BB/RSI, the same order management and exit-only reversal remain unchanged.
 Run only this new configuration with the newly compiled EA and compare it to
 the established 45 independent batches, +$53.76 and 3.57% equity drawdown.
 Do not treat an increase in signal count alone as a success.
+
+## Experimental CONT SELL-only BB bypass
+
+Compile `src/GoldFusion_EA_v2.mq5` again before testing. Run
+`goldfusion_mt5_sp2l_continuation_sell_bb_bypass_on.ini` against the same
+2026-01-01–2026-09-28 XAUUSD_i M15 real-tick baseline. It differs from
+`goldfusion_mt5_sp2l_continuation_on.ini` in exactly one input:
+`ContinuationSellBypassBB=true`. This bypasses BB for CONT SELL **entries
+only**; CONT BUY, SP2L, RETEST, reversal exits, UT, and trade management
+retain their existing rules. The default is false. Compare with the baseline
+$53.76 net / 135 positions / 3.57% max equity drawdown, and inspect actual
+`[BATCH] engine=CONT` fills and outcomes. Two historical rejected SELL
+candidates motivated the experiment; M15 OHLC alone cannot prove their
+counterfactual realized profits. Do not treat this as a recommended live preset.
