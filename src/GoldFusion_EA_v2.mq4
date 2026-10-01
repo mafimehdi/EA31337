@@ -71,6 +71,14 @@ input ENUM_REVERSAL_PRIMARY ReversalPrimary=REV_AUTO;
 input bool ShowStatsTable=true;
 input int MagicNumber=20260927;
 input int Slippage=30;
+// Experimental virtual four-way ladder. No broker-side pending orders are placed.
+input bool UseVirtualGrid=false;
+input int GridSteps=10;
+input double GridStepPrice=1.0;
+input double GridPairOffsetPrice=0.20;
+input double GridTakeProfitPrice=1.0;
+input double GridStopLossPrice=0.50;
+
 
 #define ENGINE_PB 0
 #define ENGINE_SP2L 1
@@ -86,6 +94,17 @@ int g_trades=0, g_wins=0, g_losses=0, g_breakevens=0;
 double g_profitDollar=0.0;
 int g_entriesToday=0;
 double g_dayStartEquity=0.0;
+#define GRID_CAP 100
+// BS/SL are outside; sell limit is above BS, buy limit below SL.
+#define GRID_BS 0
+#define GRID_SELL_LIMIT 1
+#define GRID_SELL_STOP 2
+#define GRID_BUY_LIMIT 3
+double g_grid[4][GRID_CAP];
+int g_gridCount[4];
+bool g_gridReady=false;
+double g_prevAsk=0, g_prevBid=0;
+
 int g_tradesPB=0, g_winsPB=0, g_tradesSP=0, g_winsSP=0;
 
 double EMA(int period,int shift) { return(iMA(_Symbol,PERIOD_CURRENT,period,0,MODE_EMA,PRICE_CLOSE,shift)); }
@@ -680,13 +699,17 @@ void ShowStats()
 }
 int OnInit()
 {
-   if(!UseFixedDollarStop && !UseATRStopFloor)
+   if(UseVirtualGrid && (GridSteps<1 || GridSteps>GRID_CAP || GridStepPrice<=0 ||
+      GridPairOffsetPrice<=0 || GridPairOffsetPrice>=GridStepPrice ||
+      GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || FixedLot<=0))
+   { Print("[GRID] Invalid virtual grid inputs"); return(INIT_PARAMETERS_INCORRECT); }
+   if(!UseVirtualGrid && !UseFixedDollarStop && !UseATRStopFloor)
    { Print("[!] Enable at least one initial SL mode."); return(INIT_PARAMETERS_INCORRECT); }
-   if(UseFixedDollarStop && RiskUSD<=0)
+   if(!UseVirtualGrid && UseFixedDollarStop && RiskUSD<=0)
    { Print("[!] RiskUSD must be > 0 when fixed-dollar SL is enabled."); return(INIT_PARAMETERS_INCORRECT); }
-   if(UseATRStopFloor && (ATRStopMult<=0 || ATR_SL_Period<=0))
+   if(!UseVirtualGrid && UseATRStopFloor && (ATRStopMult<=0 || ATR_SL_Period<=0))
    { Print("[!] ATR stop settings must be > 0."); return(INIT_PARAMETERS_INCORRECT); }
-   if(UseReversal && ((ReversalPrimary==REV_PULLBACK && SignalMode==MODE_SP2L) ||
+   if(!UseVirtualGrid && UseReversal && ((ReversalPrimary==REV_PULLBACK && SignalMode==MODE_SP2L) ||
                        (ReversalPrimary==REV_SP2L && SignalMode==MODE_PULLBACK)))
    {
       Print("[!] ReversalPrimary must be enabled by SignalMode.");
@@ -710,6 +733,119 @@ int OnInit()
          " | Reversal=",(UseReversal ? EnumToString(ReversalPrimary) : "off"));
    return(INIT_SUCCEEDED);
 }
+// Virtual levels are evaluated on ticks. A market order is sent only for the
+// first crossed level; hence an opposite virtual level cannot fill on that tick.
+void GridRemove(int kind,int index)
+{
+   for(int j=index;j<g_gridCount[kind]-1;j++) g_grid[kind][j]=g_grid[kind][j+1];
+   g_gridCount[kind]--;
+}
+void GridStart()
+{
+   RefreshRates();
+   double mid=(Ask+Bid)/2.0;
+   for(int k=0;k<4;k++) g_gridCount[k]=0;
+   for(int i=1;i<=GridSteps;i++)
+   {
+      double up=mid+i*GridStepPrice, down=mid-i*GridStepPrice;
+      g_grid[GRID_BS][i-1]=NP(up);
+      g_grid[GRID_SELL_LIMIT][i-1]=NP(up+GridPairOffsetPrice);
+      g_grid[GRID_SELL_STOP][i-1]=NP(down);
+      g_grid[GRID_BUY_LIMIT][i-1]=NP(down-GridPairOffsetPrice);
+   }
+   for(int k=0;k<4;k++) g_gridCount[k]=GridSteps;
+   g_prevAsk=Ask; g_prevBid=Bid; g_gridReady=true;
+   Print("[GRID] Virtual levels anchored at ",DoubleToString(mid,_Digits),
+         "; no broker pending orders. State resets on EA restart.");
+}
+bool GridCrossed(int kind,double level)
+{
+   if(kind==GRID_BS) return(g_prevAsk<level && Ask>=level);
+   if(kind==GRID_BUY_LIMIT) return(g_prevAsk>level && Ask<=level);
+   if(kind==GRID_SELL_STOP) return(g_prevBid>level && Bid<=level);
+   return(g_prevBid<level && Bid>=level);
+}
+void GridAfterFill(int kind,int index)
+{
+   bool buy=(kind==GRID_BS || kind==GRID_BUY_LIMIT);
+   double filledLevel=g_grid[kind][index];
+   GridRemove(kind,index);
+   // Remove the farthest opposite-direction level (across both opposite types).
+   int oppositeA=buy ? GRID_SELL_LIMIT : GRID_BS;
+   int oppositeB=buy ? GRID_SELL_STOP : GRID_BUY_LIMIT;
+   int farKind=-1,farIndex=-1; double farDist=-1,mid=(Ask+Bid)/2.0;
+   for(int k=0;k<2;k++)
+   {
+      int t=(k==0 ? oppositeA : oppositeB);
+      for(int j=0;j<g_gridCount[t];j++)
+      {
+         double d=MathAbs(g_grid[t][j]-mid);
+         if(d>farDist) { farDist=d; farKind=t; farIndex=j; }
+      }
+   }
+   if(farKind>=0) GridRemove(farKind,farIndex);
+   // Extend the filled ladder one step beyond its own previous outer edge.
+   double far=(kind==GRID_BS || kind==GRID_SELL_LIMIT) ? -1e100 : 1e100;
+   for(int j=0;j<g_gridCount[kind];j++)
+   {
+      if(kind==GRID_BS || kind==GRID_SELL_LIMIT) far=MathMax(far,g_grid[kind][j]);
+      else far=MathMin(far,g_grid[kind][j]);
+   }
+   if(far<=-1e99 || far>=1e99) far=filledLevel;
+   if(g_gridCount[kind]<GRID_CAP)
+      g_grid[kind][g_gridCount[kind]++]=NP(far+((kind==GRID_BS || kind==GRID_SELL_LIMIT) ? GridStepPrice : -GridStepPrice));
+   Print("[GRID] filled kind=",kind,"; removed farthest opposite kind=",farKind,
+         "; extended same ladder; remaining virtual levels=",
+         g_gridCount[0]+g_gridCount[1]+g_gridCount[2]+g_gridCount[3]);
+}
+bool GridExecute(int kind,int index)
+{
+   bool buy=(kind==GRID_BS || kind==GRID_BUY_LIMIT);
+   if((buy && !AllowLong) || (!buy && !AllowShort)) return(false);
+   if(MaxTradesPerDay>0 && g_entriesToday>=MaxTradesPerDay) return(false);
+   if(CountMyOrders()>=MathMax(1,MaxOpenTrades)) return(false);
+   // Opposite side is blocked while any grid position remains open.
+   for(int i=OrdersTotal()-1;i>=0;i--)
+      if(OrderSelect(i,SELECT_BY_POS,MODE_TRADES) && OrderSymbol()==_Symbol &&
+         OrderMagicNumber()==MagicNumber && StringFind(OrderComment(),"VGRID")>=0 &&
+         ((buy && OrderType()==OP_SELL) || (!buy && OrderType()==OP_BUY))) return(false);
+   if(MaxSpreadPoints>0 && MarketInfo(_Symbol,MODE_SPREAD)>MaxSpreadPoints) return(false);
+   RefreshRates();
+   double price=NP(buy ? Ask : Bid), stop=NP(buy ? price-GridStopLossPrice : price+GridStopLossPrice);
+   double tp=NP(buy ? price+GridTakeProfitPrice : price-GridTakeProfitPrice);
+   if(GridStopLossPrice<MinStopDist() || GridTakeProfitPrice<MinStopDist())
+   { Print("[GRID] Stop/target below broker minimum; no order sent"); return(false); }
+   int op=buy ? OP_BUY : OP_SELL;
+   double lot=NormalizeLot(FixedLot);
+   ResetLastError();
+   if(AccountFreeMarginCheck(_Symbol,op,lot)<=0 || GetLastError()==134) return(false);
+   ResetLastError();
+   int ticket=OrderSend(_Symbol,op,lot,price,Slippage,stop,tp,"GF63 VGRID",MagicNumber,0,buy ? clrBlue : clrRed);
+   if(ticket<0) { Print("[GRID] OrderSend failed: ",GetLastError()); return(false); }
+   ListAdd(g_knownTickets,g_knownCount,ticket); g_entriesToday++;
+   Print("[GRID] #",ticket," kind=",kind," virtual level=",DoubleToString(g_grid[kind][index],_Digits),
+         " fill=",DoubleToString(price,_Digits)," SL=",DoubleToString(stop,_Digits)," TP=",DoubleToString(tp,_Digits));
+   GridAfterFill(kind,index);
+   return(true);
+}
+void GridTick()
+{
+   if(!g_gridReady) { GridStart(); return; }
+   RefreshRates();
+   if(InSession() && DailyLimitsOK())
+   {
+      int chosenKind=-1,chosenIndex=-1; double nearest=1e100;
+      for(int k=0;k<4;k++) for(int j=0;j<g_gridCount[k];j++)
+      {
+         double level=g_grid[k][j];
+         if(!GridCrossed(k,level)) continue;
+         double d=MathMin(MathAbs(level-g_prevAsk),MathAbs(level-g_prevBid));
+         if(d<nearest) { nearest=d; chosenKind=k; chosenIndex=j; }
+      }
+      if(chosenKind>=0) GridExecute(chosenKind,chosenIndex);
+   }
+   g_prevAsk=Ask; g_prevBid=Bid;
+}
 void OnDeinit(const int reason) { Comment(""); }
 void OnTick()
 {
@@ -723,6 +859,12 @@ void OnTick()
    if(UseTimeFilter && CloseOutsideSession && CountMyOrders()>0 && !InSession())
    { CloseAllMyPositions(); ShowStats(); return; }
    int openNow=CountMyOrders();
+   if(UseVirtualGrid)
+   {
+      // Grid positions retain their fixed price-distance SL/TP; no signal reversal,
+      // break-even, or trailing changes them. Existing session-close policy remains.
+      GridTick(); ShowStats(); return;
+   }
    if(openNow>0) ManageAllPositions();
    if(!newBar) { ShowStats(); return; }
    if(Bars<TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+5)
