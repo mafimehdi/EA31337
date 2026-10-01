@@ -79,6 +79,7 @@ input double GridStepPrice=1.0;
 input double GridPairOffsetPrice=0.20;
 input double GridTakeProfitPrice=1.0;
 input double GridStopLossPrice=0.50;
+input double GridMinStopOverSpreadPrice=0.10; // extra price-distance above current spread
 
 
 #define ENGINE_PB 0
@@ -705,7 +706,7 @@ int OnInit()
    if(OperationMode!=OPERATION_SIGNALS && OperationMode!=OPERATION_VIRTUAL_GRID) return(INIT_PARAMETERS_INCORRECT);
    if((OperationMode==OPERATION_VIRTUAL_GRID) && (GridSteps<1 || GridSteps>GRID_CAP || GridStepPrice<=0 ||
       GridPairOffsetPrice<=0 || GridPairOffsetPrice>=GridStepPrice ||
-      GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || FixedLot<=0))
+      GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || GridMinStopOverSpreadPrice<0 || FixedLot<=0))
    { Print("[GRID] Invalid virtual grid inputs"); return(INIT_PARAMETERS_INCORRECT); }
    if(!(OperationMode==OPERATION_VIRTUAL_GRID) && !UseFixedDollarStop && !UseATRStopFloor)
    { Print("[!] Enable at least one initial SL mode."); return(INIT_PARAMETERS_INCORRECT); }
@@ -769,12 +770,23 @@ bool GridCrossed(int kind,double level)
    if(kind==GRID_SELL_STOP) return(g_prevBid>level && Bid<=level);
    return(g_prevBid<level && Bid>=level);
 }
+void GridExtend(int kind,double removedLevel)
+{
+   bool upper=(kind==GRID_BS || kind==GRID_SELL_LIMIT);
+   double edge=removedLevel;
+   for(int j=0;j<g_gridCount[kind];j++)
+      edge=upper ? MathMax(edge,g_grid[kind][j]) : MathMin(edge,g_grid[kind][j]);
+   if(g_gridCount[kind]<GRID_CAP)
+      g_grid[kind][g_gridCount[kind]++]=NP(edge+(upper ? GridStepPrice : -GridStepPrice));
+}
 void GridAfterFill(int kind,int index)
 {
    bool buy=(kind==GRID_BS || kind==GRID_BUY_LIMIT);
    double filledLevel=g_grid[kind][index];
    GridRemove(kind,index);
-   // Remove the farthest opposite-direction level (across both opposite types).
+   // Cancel the farthest opposite level, then replenish BOTH ladders outward:
+   // cancellation has a real effect (the old level is gone), but each kind
+   // retains GridSteps levels rather than eventually shrinking to zero.
    int oppositeA=buy ? GRID_SELL_LIMIT : GRID_BS;
    int oppositeB=buy ? GRID_SELL_STOP : GRID_BUY_LIMIT;
    int farKind=-1,farIndex=-1; double farDist=-1,mid=(Ask+Bid)/2.0;
@@ -787,19 +799,15 @@ void GridAfterFill(int kind,int index)
          if(d>farDist) { farDist=d; farKind=t; farIndex=j; }
       }
    }
-   if(farKind>=0) GridRemove(farKind,farIndex);
-   // Extend the filled ladder one step beyond its own previous outer edge.
-   double far=(kind==GRID_BS || kind==GRID_SELL_LIMIT) ? -1e100 : 1e100;
-   for(int j=0;j<g_gridCount[kind];j++)
+   if(farKind>=0)
    {
-      if(kind==GRID_BS || kind==GRID_SELL_LIMIT) far=MathMax(far,g_grid[kind][j]);
-      else far=MathMin(far,g_grid[kind][j]);
+      double cancelled=g_grid[farKind][farIndex];
+      GridRemove(farKind,farIndex);
+      GridExtend(farKind,cancelled);
    }
-   if(far<=-1e99 || far>=1e99) far=filledLevel;
-   if(g_gridCount[kind]<GRID_CAP)
-      g_grid[kind][g_gridCount[kind]++]=NP(far+((kind==GRID_BS || kind==GRID_SELL_LIMIT) ? GridStepPrice : -GridStepPrice));
-   Print("[GRID] filled kind=",kind,"; removed farthest opposite kind=",farKind,
-         "; extended same ladder; remaining virtual levels=",
+   GridExtend(kind,filledLevel);
+   Print("[GRID] filled kind=",kind,"; replaced farthest opposite kind=",farKind,
+         "; extended filled ladder; virtual levels=",
          g_gridCount[0]+g_gridCount[1]+g_gridCount[2]+g_gridCount[3]);
 }
 int CountOtherModePositions(bool gridMode)
@@ -824,6 +832,14 @@ bool GridExecute(int kind,int index)
          ((buy && OrderType()==OP_SELL) || (!buy && OrderType()==OP_BUY))) return(false);
    if(MaxSpreadPoints>0 && MarketInfo(_Symbol,MODE_SPREAD)>MaxSpreadPoints) return(false);
    RefreshRates();
+   double spread=Ask-Bid;
+   if(GridStopLossPrice<=spread+GridMinStopOverSpreadPrice)
+   {
+      Print("[GRID] Entry skipped: SL distance ",DoubleToString(GridStopLossPrice,_Digits),
+            " <= spread ",DoubleToString(spread,_Digits)," + safety ",
+            DoubleToString(GridMinStopOverSpreadPrice,_Digits));
+      return(false);
+   }
    double price=NP(buy ? Ask : Bid), stop=NP(buy ? price-GridStopLossPrice : price+GridStopLossPrice);
    double tp=NP(buy ? price+GridTakeProfitPrice : price-GridTakeProfitPrice);
    if(GridStopLossPrice<MinStopDist() || GridTakeProfitPrice<MinStopDist())
