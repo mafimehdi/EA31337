@@ -1,0 +1,5 @@
+file,configuration
+10_filters_2_000_1.set,Both engines; no optional filters
+10_filters_2_001_1.set,Both engines; BB only
+10_filters_2_101_1.set,Both engines; UT and BB
+10_filters_2_111_1.set,"Both engines; UT, RSI and BB"

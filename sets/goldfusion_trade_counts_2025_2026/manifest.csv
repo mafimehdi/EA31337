@@ -1,0 +1,7 @@
+file,MaxOpenTrades,TradesPerSignal,maximum_nominal_open_risk_USD,status
+personal4_maxopen_1_persignal_1.set,1,1,10,new
+personal4_maxopen_2_persignal_1.set,2,1,20,new
+personal4_maxopen_2_persignal_2.set,2,2,20,new
+personal4_maxopen_3_persignal_1.set,3,1,30,new
+personal4_maxopen_3_persignal_2.set,3,2,30,new
+personal4_maxopen_3_persignal_3.set,3,3,30,already tested at spread 47

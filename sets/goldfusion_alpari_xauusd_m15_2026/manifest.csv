@@ -1,0 +1,187 @@
+file,group,purpose
+00_baseline.set,baseline,Original defaults; both engines; optional filters off
+10_filters_0_000_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_0_001_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_0_010_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_0_011_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_0_100_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_0_101_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_0_110_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_0_111_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_000_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_001_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_010_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_011_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_100_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_101_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_110_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_1_111_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_000_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_000_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_001_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_001_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_010_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_010_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_011_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_011_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_100_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_100_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_101_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_101_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_110_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_110_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_111_1.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+10_filters_2_111_2.set,filter_matrix,"Engine(s), optional votes and mandatory primary; quorum ceil(2N/3)"
+20_single_SignalMode_01.set,single_factor,SignalMode=0; dependent feature enabled
+20_single_SignalMode_02.set,single_factor,SignalMode=1; dependent feature enabled
+20_single_SignalMode_03.set,single_factor,SignalMode=2; dependent feature enabled
+20_single_TrendEMA_01.set,single_factor,TrendEMA=100; dependent feature enabled
+20_single_TrendEMA_02.set,single_factor,TrendEMA=300; dependent feature enabled
+20_single_PullbackEMA_01.set,single_factor,PullbackEMA=20; dependent feature enabled
+20_single_PullbackEMA_02.set,single_factor,PullbackEMA=80; dependent feature enabled
+20_single_PullbackValidBars_01.set,single_factor,PullbackValidBars=3; dependent feature enabled
+20_single_PullbackValidBars_02.set,single_factor,PullbackValidBars=12; dependent feature enabled
+20_single_ATR_Period_01.set,single_factor,ATR_Period=7; dependent feature enabled
+20_single_ATR_Period_02.set,single_factor,ATR_Period=21; dependent feature enabled
+20_single_SP2L_SpikeBars_01.set,single_factor,SP2L_SpikeBars=3; dependent feature enabled
+20_single_SP2L_SpikeBars_02.set,single_factor,SP2L_SpikeBars=4; dependent feature enabled
+20_single_SP2L_MinSpikeATR_01.set,single_factor,SP2L_MinSpikeATR=0.8; dependent feature enabled
+20_single_SP2L_MinSpikeATR_02.set,single_factor,SP2L_MinSpikeATR=1.8; dependent feature enabled
+20_single_SP2L_MinBodyRatio_01.set,single_factor,SP2L_MinBodyRatio=0.5; dependent feature enabled
+20_single_SP2L_MinBodyRatio_02.set,single_factor,SP2L_MinBodyRatio=0.75; dependent feature enabled
+20_single_SP2L_RequireGap_01.set,single_factor,SP2L_RequireGap=false; dependent feature enabled
+20_single_SP2L_MaxLegBars_01.set,single_factor,SP2L_MaxLegBars=4; dependent feature enabled
+20_single_SP2L_MaxLegBars_02.set,single_factor,SP2L_MaxLegBars=12; dependent feature enabled
+20_single_SP2L_StrictBreak_01.set,single_factor,SP2L_StrictBreak=true; dependent feature enabled
+20_single_SP2L_UseTrendFilter_01.set,single_factor,SP2L_UseTrendFilter=false; dependent feature enabled
+20_single_UseUTFilter_01.set,single_factor,UseUTFilter=true; dependent feature enabled
+20_single_UT_KeyValue_01.set,single_factor,UT_KeyValue=0.7; dependent feature enabled
+20_single_UT_KeyValue_02.set,single_factor,UT_KeyValue=1.5; dependent feature enabled
+20_single_UT_ATRPeriod_01.set,single_factor,UT_ATRPeriod=7; dependent feature enabled
+20_single_UT_ATRPeriod_02.set,single_factor,UT_ATRPeriod=21; dependent feature enabled
+20_single_UseRSIFilter_01.set,single_factor,UseRSIFilter=true; dependent feature enabled
+20_single_RSI_Length_01.set,single_factor,RSI_Length=7; dependent feature enabled
+20_single_RSI_Length_02.set,single_factor,RSI_Length=21; dependent feature enabled
+20_single_RSI_Overbought_01.set,single_factor,RSI_Overbought=65; dependent feature enabled
+20_single_RSI_Overbought_02.set,single_factor,RSI_Overbought=80; dependent feature enabled
+20_single_RSI_Oversold_01.set,single_factor,RSI_Oversold=20; dependent feature enabled
+20_single_RSI_Oversold_02.set,single_factor,RSI_Oversold=35; dependent feature enabled
+20_single_RSI_MidLine_01.set,single_factor,RSI_MidLine=45; dependent feature enabled
+20_single_RSI_MidLine_02.set,single_factor,RSI_MidLine=55; dependent feature enabled
+20_single_UseBBFilter_01.set,single_factor,UseBBFilter=true; dependent feature enabled
+20_single_BB_Length_01.set,single_factor,BB_Length=20; dependent feature enabled
+20_single_BB_Length_02.set,single_factor,BB_Length=100; dependent feature enabled
+20_single_BB_FilterMode_01.set,single_factor,BB_FilterMode=0; dependent feature enabled
+20_single_BB_FilterMode_02.set,single_factor,BB_FilterMode=1; dependent feature enabled
+20_single_FixedLot_01.set,single_factor,FixedLot=0.02; dependent feature enabled
+20_single_RiskUSD_01.set,single_factor,RiskUSD=3.0; dependent feature enabled
+20_single_RiskUSD_02.set,single_factor,RiskUSD=10.0; dependent feature enabled
+20_single_RewardUSD_01.set,single_factor,RewardUSD=0.0; dependent feature enabled
+20_single_RewardUSD_02.set,single_factor,RewardUSD=10.0; dependent feature enabled
+20_single_MaxOpenTrades_01.set,single_factor,MaxOpenTrades=1; dependent feature enabled
+20_single_MaxOpenTrades_02.set,single_factor,MaxOpenTrades=5; dependent feature enabled
+20_single_TradesPerSignal_01.set,single_factor,TradesPerSignal=0; dependent feature enabled
+20_single_TradesPerSignal_02.set,single_factor,TradesPerSignal=1; dependent feature enabled
+20_single_UseBreakEven_01.set,single_factor,UseBreakEven=false; dependent feature enabled
+20_single_BE_TriggerUSD_01.set,single_factor,BE_TriggerUSD=0.75; dependent feature enabled
+20_single_BE_TriggerUSD_02.set,single_factor,BE_TriggerUSD=3.0; dependent feature enabled
+20_single_BE_Extra_Points_01.set,single_factor,BE_Extra_Points=0; dependent feature enabled
+20_single_BE_Extra_Points_02.set,single_factor,BE_Extra_Points=50; dependent feature enabled
+20_single_UseBE_Retreat_01.set,single_factor,UseBE_Retreat=false; dependent feature enabled
+20_single_BE_RetreatMode_01.set,single_factor,BE_RetreatMode=1; dependent feature enabled
+20_single_BE_RetreatDistUSD_01.set,single_factor,BE_RetreatDistUSD=1.0; dependent feature enabled
+20_single_BE_RetreatDistUSD_02.set,single_factor,BE_RetreatDistUSD=4.0; dependent feature enabled
+20_single_UseTrailing_01.set,single_factor,UseTrailing=false; dependent feature enabled
+20_single_TrailStartUSD_01.set,single_factor,TrailStartUSD=1.5; dependent feature enabled
+20_single_TrailStartUSD_02.set,single_factor,TrailStartUSD=4.0; dependent feature enabled
+20_single_TrailDistUSD_01.set,single_factor,TrailDistUSD=1.0; dependent feature enabled
+20_single_TrailDistUSD_02.set,single_factor,TrailDistUSD=3.0; dependent feature enabled
+20_single_MaxDailyLossUSD_01.set,single_factor,MaxDailyLossUSD=10.0; dependent feature enabled
+20_single_MaxDailyLossUSD_02.set,single_factor,MaxDailyLossUSD=30.0; dependent feature enabled
+20_single_MaxTradesPerDay_01.set,single_factor,MaxTradesPerDay=3; dependent feature enabled
+20_single_MaxTradesPerDay_02.set,single_factor,MaxTradesPerDay=10; dependent feature enabled
+20_single_MaxSpreadPoints_01.set,single_factor,MaxSpreadPoints=0; dependent feature enabled
+20_single_MaxSpreadPoints_02.set,single_factor,MaxSpreadPoints=100; dependent feature enabled
+20_single_AllowLong_01.set,single_factor,AllowLong=false; dependent feature enabled
+20_single_AllowShort_01.set,single_factor,AllowShort=false; dependent feature enabled
+20_single_SL_CooldownBars_01.set,single_factor,SL_CooldownBars=2; dependent feature enabled
+20_single_SL_CooldownBars_02.set,single_factor,SL_CooldownBars=8; dependent feature enabled
+20_single_UseTimeFilter_01.set,single_factor,UseTimeFilter=false; dependent feature enabled
+20_single_SessionStartHour_01.set,single_factor,SessionStartHour=8; dependent feature enabled
+20_single_SessionStartHour_02.set,single_factor,SessionStartHour=20; dependent feature enabled
+20_single_SessionEndHour_01.set,single_factor,SessionEndHour=12; dependent feature enabled
+20_single_SessionEndHour_02.set,single_factor,SessionEndHour=23; dependent feature enabled
+20_single_CloseOutsideSession_01.set,single_factor,CloseOutsideSession=true; dependent feature enabled
+20_single_DST_Mode_01.set,single_factor,DST_Mode=1; dependent feature enabled
+20_single_DST_Mode_02.set,single_factor,DST_Mode=3; dependent feature enabled
+20_single_UseReversal_01.set,single_factor,UseReversal=false; dependent feature enabled
+20_single_ReversalPrimary_01.set,single_factor,ReversalPrimary=1; dependent feature enabled
+20_single_ReversalPrimary_02.set,single_factor,ReversalPrimary=2; dependent feature enabled
+20_single_ShowStatsTable_01.set,single_factor,ShowStatsTable=false; dependent feature enabled
+20_single_MagicNumber_01.set,single_factor,MagicNumber=20260928; dependent feature enabled
+20_single_Slippage_01.set,single_factor,Slippage=10; dependent feature enabled
+20_single_Slippage_02.set,single_factor,Slippage=50; dependent feature enabled
+30_pairwise_00.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_01.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_02.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_03.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_04.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_05.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_06.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_07.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_08.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_09.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_10.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_11.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_12.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_13.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_14.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_15.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_16.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_17.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_18.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_19.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_20.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_21.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_22.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_23.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_24.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_25.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_26.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_27.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_28.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_29.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_30.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_31.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_32.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_33.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_34.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_35.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_36.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_37.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_38.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_39.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_40.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_41.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_42.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_43.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_44.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_45.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_46.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_47.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_48.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_49.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_50.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_51.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_52.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_53.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_54.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_55.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_56.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_57.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_58.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_59.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_60.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_61.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_62.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
+30_pairwise_63.set,pairwise,Binary pairwise input coverage; some conditional inputs may be inactive
