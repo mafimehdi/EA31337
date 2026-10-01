@@ -104,6 +104,7 @@ int g_gridCount[2];
 bool g_gridReady=false;
 double g_prevAsk=0, g_prevBid=0;
 datetime g_gridLastLog=0;
+int g_gridUnsafeTicket=0; // stop new entries if a misprotected fill cannot be closed
 
 int g_tradesPB=0, g_winsPB=0, g_tradesSP=0, g_winsSP=0;
 
@@ -836,12 +837,37 @@ int CountOtherModePositions(bool gridMode)
          ((StringFind(OrderComment(),"VGRID")>=0)!=gridMode)) n++;
    return(n);
 }
+// Fail closed if a market fill cannot be protected at the requested distance.
+// If even the emergency close fails, stop all subsequent grid entries.
+bool GridAbortUnprotected(int ticket,int op,string reason)
+{
+   Print("[GRID CRITICAL] #",ticket," ",reason,"; attempting immediate close");
+   for(int r=0;r<3;r++)
+   {
+      if(!OrderSelect(ticket,SELECT_BY_TICKET,MODE_TRADES))
+      {
+         g_gridUnsafeTicket=ticket;
+         Print("[GRID CRITICAL] Cannot verify #",ticket,"; new entries halted");
+         return(false);
+      }
+      if(OrderCloseTime()!=0) return(false);
+      RefreshRates();
+      ResetLastError();
+      if(OrderClose(ticket,OrderLots(),NP(op==OP_BUY ? Bid : Ask),Slippage,clrOrange))
+      { Print("[GRID] Closed unsafe #",ticket," immediately"); return(false); }
+      Print("[GRID CRITICAL] Close attempt ",r+1," failed err=",GetLastError());
+      if(r<2) Sleep(100);
+   }
+   g_gridUnsafeTicket=ticket;
+   Print("[GRID CRITICAL] UNSAFE OPEN #",ticket,"; NEW GRID ENTRIES HALTED until position is closed and inspected");
+   return(false);
+}
 bool GridExecute(int kind,int index)
 {
    bool buy=(kind==GRID_BS);
    if((buy && !AllowLong) || (!buy && !AllowShort)) return(false);
+   if(!TradingAllowed()) return(false);
    // No configured trade-count cap in grid mode. Broker margin still applies.
-   // Same-direction positions may stack; never hedge an open grid position.
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
@@ -849,13 +875,21 @@ bool GridExecute(int kind,int index)
       if(StringFind(OrderComment(),"VGRID")<0) continue;
       if((buy && OrderType()==OP_SELL) || (!buy && OrderType()==OP_BUY)) return(false);
    }
-   // No spread gate in virtual mode. Real broker spread still affects fill
-   // price and whether a protective stop meets broker minimum distances.
    RefreshRates();
-   double price=NP(buy ? Ask : Bid), stop=NP(buy ? price-GridStopLossPrice : price+GridStopLossPrice);
+   double price=NP(buy ? Ask : Bid);
+   double stop=NP(buy ? price-GridStopLossPrice : price+GridStopLossPrice);
    double tp=NP(buy ? price+GridTakeProfitPrice : price-GridTakeProfitPrice);
-   if(GridStopLossPrice<MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point || GridTakeProfitPrice<MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point)
-   { Print("[GRID] Stop/target below broker minimum; no order sent"); return(false); }
+   double brokerMin=MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point;
+   double slFromMarket=buy ? Bid-stop : stop-Ask;
+   double tpFromMarket=buy ? tp-Bid : Ask-tp;
+   if(slFromMarket+_Point/2<brokerMin || tpFromMarket+_Point/2<brokerMin)
+   {
+      Print("[GRID] Entry skipped: broker stop level ",DoubleToString(brokerMin,_Digits),
+            " requested SL gap=",DoubleToString(slFromMarket,_Digits),
+            " TP gap=",DoubleToString(tpFromMarket,_Digits),
+            " bid=",DoubleToString(Bid,_Digits)," ask=",DoubleToString(Ask,_Digits));
+      return(false);
+   }
    int op=buy ? OP_BUY : OP_SELL;
    double lot=NormalizeLot(FixedLot);
    ResetLastError();
@@ -865,10 +899,50 @@ bool GridExecute(int kind,int index)
    { Print("[GRID] Entry rejected: insufficient margin; freeAfter=",freeAfter," err=",marginErr); return(false); }
    ResetLastError();
    int ticket=OrderSend(_Symbol,op,lot,price,Slippage,stop,tp,"GF63 VGRID",MagicNumber,0,buy ? clrBlue : clrRed);
-   if(ticket<0) { Print("[GRID] OrderSend failed: ",GetLastError()); return(false); }
-   ListAdd(g_knownTickets,g_knownCount,ticket); g_entriesToday++;
+   if(ticket<0)
+   {
+      int err=GetLastError(); RefreshRates();
+      Print("[GRID] OrderSend failed err=",err," requested=",DoubleToString(price,_Digits),
+            " SL=",DoubleToString(stop,_Digits)," TP=",DoubleToString(tp,_Digits),
+            " bid=",DoubleToString(Bid,_Digits)," ask=",DoubleToString(Ask,_Digits),
+            " stopLevel=",DoubleToString(brokerMin,_Digits));
+      return(false);
+   }
+   g_entriesToday++;
+   if(!OrderSelect(ticket,SELECT_BY_TICKET,MODE_TRADES))
+   {
+      g_gridUnsafeTicket=ticket;
+      Print("[GRID CRITICAL] #",ticket," fill cannot be verified; new entries halted");
+      return(false);
+   }
+   if(OrderCloseTime()!=0)
+   { Print("[GRID] #",ticket," already closed before fill verification"); return(false); }
+   double actual=OrderOpenPrice();
+   double actualSL=NP(buy ? actual-GridStopLossPrice : actual+GridStopLossPrice);
+   double actualTP=NP(buy ? actual+GridTakeProfitPrice : actual-GridTakeProfitPrice);
+   if(MathAbs(OrderStopLoss()-actualSL)>_Point/2 || MathAbs(OrderTakeProfit()-actualTP)>_Point/2)
+   {
+      RefreshRates();
+      double minNow=MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point;
+      double freeze=MarketInfo(_Symbol,MODE_FREEZELEVEL)*_Point;
+      double required=MathMax(minNow,freeze);
+      double slGap=buy ? Bid-actualSL : actualSL-Ask;
+      double tpGap=buy ? actualTP-Bid : Ask-actualTP;
+      if(slGap+_Point/2<required || tpGap+_Point/2<required)
+         return(GridAbortUnprotected(ticket,op,"actual-price SL/TP too close to broker quote; SL gap="+
+                  DoubleToString(slGap,_Digits)+" TP gap="+DoubleToString(tpGap,_Digits)+
+                  " required="+DoubleToString(required,_Digits)));
+      if(!TryModify(ticket,actual,actualSL,actualTP))
+         return(GridAbortUnprotected(ticket,op,"could not realign SL/TP after market fill"));
+      if(!OrderSelect(ticket,SELECT_BY_TICKET,MODE_TRADES) || OrderCloseTime()!=0)
+      { Print("[GRID] #",ticket," closed during protective modification"); return(false); }
+      if(MathAbs(OrderStopLoss()-actualSL)>_Point/2 || MathAbs(OrderTakeProfit()-actualTP)>_Point/2)
+         return(GridAbortUnprotected(ticket,op,"broker protection differs from requested distance"));
+   }
+   ListAdd(g_knownTickets,g_knownCount,ticket);
    Print("[GRID] #",ticket," kind=",kind," virtual level=",DoubleToString(g_grid[kind][index],_Digits),
-         " fill=",DoubleToString(price,_Digits)," SL=",DoubleToString(stop,_Digits)," TP=",DoubleToString(tp,_Digits));
+         " requested=",DoubleToString(price,_Digits)," ACTUAL fill=",DoubleToString(actual,_Digits),
+         " SL=",DoubleToString(OrderStopLoss(),_Digits)," TP=",DoubleToString(OrderTakeProfit(),_Digits));
    GridAfterFill(kind,index);
    return(true);
 }
@@ -880,6 +954,16 @@ void GridTick()
    // the requested uncapped grid mode.
    bool lossOK=(MaxDailyLossUSD<=0 || g_dayStartEquity<=0 ||
                 g_dayStartEquity-AccountEquity()<MaxDailyLossUSD);
+   if(g_gridUnsafeTicket>0)
+   {
+      if(!OrderSelect(g_gridUnsafeTicket,SELECT_BY_TICKET,MODE_TRADES) || OrderCloseTime()==0)
+      {
+         GridLogStatus("HALTED_UNVERIFIED_TICKET_"+IntegerToString(g_gridUnsafeTicket));
+         g_prevAsk=GridAsk(); g_prevBid=GridBid(); return;
+      }
+      Print("[GRID] Unsafe ticket #",g_gridUnsafeTicket," verified closed; resuming scans");
+      g_gridUnsafeTicket=0;
+   }
    bool filled=false;
    if(InSession() && lossOK)
    {
