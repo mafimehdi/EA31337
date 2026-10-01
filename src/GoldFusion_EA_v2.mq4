@@ -79,6 +79,7 @@ input double GridStepPrice=1.0;
 input double GridTouchSpreadPrice=0.30; // fixed quote gap used for virtual triggers only
 input double GridTakeProfitPrice=1.0;
 input double GridStopLossPrice=0.50;
+input int GridLogIntervalSeconds=60; // 0 disables periodic grid status
 
 
 #define ENGINE_PB 0
@@ -102,6 +103,7 @@ double g_grid[2][GRID_CAP];
 int g_gridCount[2];
 bool g_gridReady=false;
 double g_prevAsk=0, g_prevBid=0;
+datetime g_gridLastLog=0;
 
 int g_tradesPB=0, g_winsPB=0, g_tradesSP=0, g_winsSP=0;
 
@@ -705,7 +707,7 @@ int OnInit()
    if(OperationMode!=OPERATION_SIGNALS && OperationMode!=OPERATION_VIRTUAL_GRID) return(INIT_PARAMETERS_INCORRECT);
    if((OperationMode==OPERATION_VIRTUAL_GRID) && (GridSteps<1 || GridSteps>GRID_CAP || GridStepPrice<=0 ||
       GridTouchSpreadPrice<0 || GridTouchSpreadPrice>=2*GridStepPrice ||
-      GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || FixedLot<=0))
+      GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || GridLogIntervalSeconds<0 || FixedLot<=0))
    { Print("[GRID] Invalid virtual grid inputs"); return(INIT_PARAMETERS_INCORRECT); }
    if(!(OperationMode==OPERATION_VIRTUAL_GRID) && !UseFixedDollarStop && !UseATRStopFloor)
    { Print("[!] Enable at least one initial SL mode."); return(INIT_PARAMETERS_INCORRECT); }
@@ -752,6 +754,35 @@ void GridRemove(int kind,int index)
    for(int j=index;j<g_gridCount[kind]-1;j++) g_grid[kind][j]=g_grid[kind][j+1];
    g_gridCount[kind]--;
 }
+void GridLogStatus(string state,bool force=false)
+{
+   if(GridLogIntervalSeconds==0 && !force) return;
+   datetime now=TimeCurrent();
+   if(!force && g_gridLastLog!=0 && now-g_gridLastLog<GridLogIntervalSeconds) return;
+   g_gridLastLog=now;
+   string buys="",sells="";
+   double nearestBuy=1e100,nearestSell=-1e100;
+   for(int j=0;j<g_gridCount[GRID_BS];j++)
+   {
+      double x=g_grid[GRID_BS][j];
+      if(j>0) buys+=",";
+      buys+=DoubleToString(x,_Digits);
+      if(x>GridAsk() && x<nearestBuy) nearestBuy=x;
+   }
+   for(int j=0;j<g_gridCount[GRID_SELL_STOP];j++)
+   {
+      double x=g_grid[GRID_SELL_STOP][j];
+      if(j>0) sells+=",";
+      sells+=DoubleToString(x,_Digits);
+      if(x<GridBid() && x>nearestSell) nearestSell=x;
+   }
+   Print("[GRID STATUS] ",state," | virtualAsk=",DoubleToString(GridAsk(),_Digits),
+         " virtualBid=",DoubleToString(GridBid(),_Digits),
+         " realAsk=",DoubleToString(Ask,_Digits)," realBid=",DoubleToString(Bid,_Digits),
+         " | nextBuy=",(nearestBuy<1e99 ? DoubleToString(nearestBuy,_Digits) : "none"),
+         " nextSell=",(nearestSell>-1e99 ? DoubleToString(nearestSell,_Digits) : "none"),
+         " | buyStops=[",buys,"] sellStops=[",sells,"]");
+}
 void GridStart()
 {
    RefreshRates();
@@ -766,6 +797,7 @@ void GridStart()
    g_prevAsk=GridAsk(); g_prevBid=GridBid(); g_gridReady=true;
    Print("[GRID] ",GridSteps,"+",GridSteps," virtual stop levels anchored at ",DoubleToString(mid,_Digits),
          "; no broker pending orders. Levels reset on EA restart.");
+   GridLogStatus("anchored",true);
 }
 bool GridCrossed(int kind,double level)
 {
@@ -827,7 +859,10 @@ bool GridExecute(int kind,int index)
    int op=buy ? OP_BUY : OP_SELL;
    double lot=NormalizeLot(FixedLot);
    ResetLastError();
-   if(AccountFreeMarginCheck(_Symbol,op,lot)<=0 || GetLastError()==134) return(false);
+   double freeAfter=AccountFreeMarginCheck(_Symbol,op,lot);
+   int marginErr=GetLastError();
+   if(freeAfter<=0 || marginErr==134)
+   { Print("[GRID] Entry rejected: insufficient margin; freeAfter=",freeAfter," err=",marginErr); return(false); }
    ResetLastError();
    int ticket=OrderSend(_Symbol,op,lot,price,Slippage,stop,tp,"GF63 VGRID",MagicNumber,0,buy ? clrBlue : clrRed);
    if(ticket<0) { Print("[GRID] OrderSend failed: ",GetLastError()); return(false); }
@@ -885,6 +920,14 @@ void GridTick()
       GridStart();
       return;
    }
+   // Log state once per interval, not on every tick. There is no heartbeat
+   // without a broker tick because virtual stops run inside OnTick.
+   string state="SCANNING";
+   if(!InSession()) state="BLOCKED_SESSION";
+   else if(!lossOK) state="BLOCKED_DAILY_LOSS";
+   else if(!IsTradeAllowed()) state="TERMINAL_TRADE_DISABLED";
+   else if(hasGridPosition) state="SCANNING_SAME_DIRECTION_ONLY";
+   GridLogStatus(state);
    // Levels are rolling ladders, not reset around current price after fills.
    // This preserves the opposite stop installed at the touched level.
    g_prevAsk=GridAsk(); g_prevBid=GridBid();
@@ -925,7 +968,12 @@ void OnTick()
    if((OperationMode==OPERATION_VIRTUAL_GRID))
    {
       // No new grid entries until all signal-mode positions have closed.
-      if(CountOtherModePositions(true)>0) { ShowStats(); return; }
+      if(CountOtherModePositions(true)>0)
+      {
+         RefreshRates();
+         GridLogStatus("BLOCKED_OLD_SIGNAL_POSITIONS");
+         ShowStats(); return;
+      }
       GridTick(); ShowStats(); return;
    }
    if(!newBar) { ShowStats(); return; }
