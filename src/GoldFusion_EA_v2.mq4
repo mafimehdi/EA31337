@@ -72,7 +72,8 @@ input bool ShowStatsTable=true;
 input int MagicNumber=20260927;
 input int Slippage=30;
 // Experimental virtual four-way ladder. No broker-side pending orders are placed.
-input bool UseVirtualGrid=false;
+enum ENUM_OPERATION_MODE { OPERATION_SIGNALS=0, OPERATION_VIRTUAL_GRID=1 };
+input ENUM_OPERATION_MODE OperationMode=OPERATION_SIGNALS;
 input int GridSteps=10;
 input double GridStepPrice=1.0;
 input double GridPairOffsetPrice=0.20;
@@ -338,6 +339,7 @@ void ManageAllPositions()
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(OrderSymbol()!=_Symbol || OrderMagicNumber()!=MagicNumber) continue;
+      if(StringFind(OrderComment(),"VGRID")>=0) continue;
       tickets[n++]=OrderTicket();
    }
    for(int k=0;k<n;k++) ManageOneOrder(tickets[k]);
@@ -542,6 +544,7 @@ bool CloseReversedPositions(bool closeBuys,bool closeSells)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
       if(OrderSymbol()!=_Symbol || OrderMagicNumber()!=MagicNumber) continue;
+      if(StringFind(OrderComment(),"VGRID")>=0) continue;
       int type=OrderType();
       if(!((type==OP_BUY && closeBuys) || (type==OP_SELL && closeSells))) continue;
       int ticket=OrderTicket(); double lots=OrderLots();
@@ -699,17 +702,18 @@ void ShowStats()
 }
 int OnInit()
 {
-   if(UseVirtualGrid && (GridSteps<1 || GridSteps>GRID_CAP || GridStepPrice<=0 ||
+   if(OperationMode!=OPERATION_SIGNALS && OperationMode!=OPERATION_VIRTUAL_GRID) return(INIT_PARAMETERS_INCORRECT);
+   if((OperationMode==OPERATION_VIRTUAL_GRID) && (GridSteps<1 || GridSteps>GRID_CAP || GridStepPrice<=0 ||
       GridPairOffsetPrice<=0 || GridPairOffsetPrice>=GridStepPrice ||
       GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || FixedLot<=0))
    { Print("[GRID] Invalid virtual grid inputs"); return(INIT_PARAMETERS_INCORRECT); }
-   if(!UseVirtualGrid && !UseFixedDollarStop && !UseATRStopFloor)
+   if(!(OperationMode==OPERATION_VIRTUAL_GRID) && !UseFixedDollarStop && !UseATRStopFloor)
    { Print("[!] Enable at least one initial SL mode."); return(INIT_PARAMETERS_INCORRECT); }
-   if(!UseVirtualGrid && UseFixedDollarStop && RiskUSD<=0)
+   if(!(OperationMode==OPERATION_VIRTUAL_GRID) && UseFixedDollarStop && RiskUSD<=0)
    { Print("[!] RiskUSD must be > 0 when fixed-dollar SL is enabled."); return(INIT_PARAMETERS_INCORRECT); }
-   if(!UseVirtualGrid && UseATRStopFloor && (ATRStopMult<=0 || ATR_SL_Period<=0))
+   if(!(OperationMode==OPERATION_VIRTUAL_GRID) && UseATRStopFloor && (ATRStopMult<=0 || ATR_SL_Period<=0))
    { Print("[!] ATR stop settings must be > 0."); return(INIT_PARAMETERS_INCORRECT); }
-   if(!UseVirtualGrid && UseReversal && ((ReversalPrimary==REV_PULLBACK && SignalMode==MODE_SP2L) ||
+   if(!(OperationMode==OPERATION_VIRTUAL_GRID) && UseReversal && ((ReversalPrimary==REV_PULLBACK && SignalMode==MODE_SP2L) ||
                        (ReversalPrimary==REV_SP2L && SignalMode==MODE_PULLBACK)))
    {
       Print("[!] ReversalPrimary must be enabled by SignalMode.");
@@ -798,6 +802,15 @@ void GridAfterFill(int kind,int index)
          "; extended same ladder; remaining virtual levels=",
          g_gridCount[0]+g_gridCount[1]+g_gridCount[2]+g_gridCount[3]);
 }
+int CountOtherModePositions(bool gridMode)
+{
+   int n=0;
+   for(int i=OrdersTotal()-1;i>=0;i--)
+      if(OrderSelect(i,SELECT_BY_POS,MODE_TRADES) && OrderSymbol()==_Symbol &&
+         OrderMagicNumber()==MagicNumber && (OrderType()==OP_BUY || OrderType()==OP_SELL) &&
+         ((StringFind(OrderComment(),"VGRID")>=0)!=gridMode)) n++;
+   return(n);
+}
 bool GridExecute(int kind,int index)
 {
    bool buy=(kind==GRID_BS || kind==GRID_BUY_LIMIT);
@@ -859,16 +872,11 @@ void OnTick()
    if(UseTimeFilter && CloseOutsideSession && CountMyOrders()>0 && !InSession())
    { CloseAllMyPositions(); ShowStats(); return; }
    int openNow=CountMyOrders();
-   if(UseVirtualGrid)
+   if(openNow>0) ManageAllPositions(); // Only legacy positions are modified.
+   // Existing signal positions keep their reversal-exit logic after a mode switch.
+   if(newBar && Bars>=TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+5 &&
+      CountOtherModePositions(true)>0)
    {
-      // Grid positions retain their fixed price-distance SL/TP; no signal reversal,
-      // break-even, or trailing changes them. Existing session-close policy remains.
-      GridTick(); ShowStats(); return;
-   }
-   if(openNow>0) ManageAllPositions();
-   if(!newBar) { ShowStats(); return; }
-   if(Bars<TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+5)
-   { ShowStats(); return; }
    // Exit before all entry gates, even outside session / while daily limits apply.
    if(UseReversal && openNow>0)
    {
@@ -883,10 +891,22 @@ void OnTick()
          TrackClosedOrders(); ShowStats(); return; // retry failed closes on next bar; no entry
       }
    }
+   }
+   if((OperationMode==OPERATION_VIRTUAL_GRID))
+   {
+      // No new grid entries until all signal-mode positions have closed.
+      if(CountOtherModePositions(true)>0) { ShowStats(); return; }
+      GridTick(); ShowStats(); return;
+   }
+   if(!newBar) { ShowStats(); return; }
+   if(Bars<TrendEMA+PullbackValidBars+SP2L_SpikeBars+SP2L_MaxLegBars+5)
+   { ShowStats(); return; }
    if(!InSession()) { ShowStats(); return; }
    if(!DailyLimitsOK()) { ShowStats(); return; }
    if(SL_CooldownBars>0 && g_slHitBar>=0 && g_barIndex-g_slHitBar<SL_CooldownBars)
    { ShowStats(); return; }
+   // No signal entries while any virtual-grid position remains open.
+   if(CountOtherModePositions(false)>0) { ShowStats(); return; }
    openNow=CountMyOrders();
    int slots=MathMax(1,MaxOpenTrades)-openNow;
    if(slots>0)
