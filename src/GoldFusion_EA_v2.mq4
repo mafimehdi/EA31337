@@ -765,11 +765,11 @@ void GridStart()
 }
 // A fixed count of levels is not enough: each order type must still have
 // a nearby level on its correct side of the CURRENT price. Re-anchor when a
-// ladder has fallen behind or its nearest level has drifted too far away.
+// ladder has fallen behind by its FULL configured range, not one step.
 bool GridNeedsRecenter()
 {
    double mid=(Ask+Bid)/2.0;
-   double maxGap=2.0*GridStepPrice+GridPairOffsetPrice;
+   double maxGap=GridSteps*GridStepPrice+GridPairOffsetPrice;
    for(int k=0;k<4;k++)
    {
       bool upper=(k==GRID_BS || k==GRID_SELL_LIMIT);
@@ -881,12 +881,7 @@ void GridTick()
 {
    if(!g_gridReady) { GridStart(); return; }
    RefreshRates();
-   if(GridNeedsRecenter())
-   {
-      Print("[GRID] Levels drifted from current price; re-anchoring virtual levels only. Open positions unchanged.");
-      GridStart();
-      return; // never fill a newly created level on the same tick
-   }
+   bool filled=false;
    if(InSession() && DailyLimitsOK())
    {
       int chosenKind=-1,chosenIndex=-1; double nearest=1e100;
@@ -897,7 +892,16 @@ void GridTick()
          double d=MathMin(MathAbs(level-g_prevAsk),MathAbs(level-g_prevBid));
          if(d<nearest) { nearest=d; chosenKind=k; chosenIndex=j; }
       }
-      if(chosenKind>=0) GridExecute(chosenKind,chosenIndex);
+      if(chosenKind>=0) filled=GridExecute(chosenKind,chosenIndex);
+   }
+   // Check re-anchoring AFTER processing the old levels: a level crossed on
+   // this tick must not disappear just because the price moved past it.
+   // Wait until the next tick after a fill before rebuilding any ladders.
+   if(!filled && GridNeedsRecenter())
+   {
+      Print("[GRID] Levels drifted beyond ladder range; re-anchoring virtual levels only. Open positions unchanged.");
+      GridStart();
+      return; // never fill a newly created level on the same tick
    }
    g_prevAsk=Ask; g_prevBid=Bid;
 }
