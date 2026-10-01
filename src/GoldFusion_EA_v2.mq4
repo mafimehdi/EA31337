@@ -77,6 +77,7 @@ input ENUM_OPERATION_MODE OperationMode=OPERATION_SIGNALS;
 input int GridSteps=10;
 input double GridStepPrice=1.0;
 input double GridTouchSpreadPrice=0.30; // fixed quote gap used for virtual triggers only
+input double GridOppositeOffsetPrice=0.50; // replacement stop offset from touched virtual level
 input double GridTakeProfitPrice=1.0;
 input double GridStopLossPrice=0.50;
 input int GridLogIntervalSeconds=60; // 0 disables periodic grid status
@@ -708,6 +709,7 @@ int OnInit()
    if(OperationMode!=OPERATION_SIGNALS && OperationMode!=OPERATION_VIRTUAL_GRID) return(INIT_PARAMETERS_INCORRECT);
    if((OperationMode==OPERATION_VIRTUAL_GRID) && (GridSteps<1 || GridSteps>GRID_CAP || GridStepPrice<=0 ||
       GridTouchSpreadPrice<0 || GridTouchSpreadPrice>=2*GridStepPrice ||
+      GridOppositeOffsetPrice<=0 || GridOppositeOffsetPrice>=GridStepPrice ||
       GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || GridLogIntervalSeconds<0 || FixedLot<=0))
    { Print("[GRID] Invalid virtual grid inputs"); return(INIT_PARAMETERS_INCORRECT); }
    if(!(OperationMode==OPERATION_VIRTUAL_GRID) && !UseFixedDollarStop && !UseATRStopFloor)
@@ -815,17 +817,18 @@ void GridAfterFill(int kind,int index)
    for(int j=0;j<g_gridCount[kind];j++)
       edge=(kind==GRID_BS ? MathMax(edge,g_grid[kind][j]) : MathMin(edge,g_grid[kind][j]));
    g_grid[kind][g_gridCount[kind]++]=NP(edge+(kind==GRID_BS ? GridStepPrice : -GridStepPrice));
-   // Move the farthest opposing virtual stop to the exact TOUCHED level,
-   // not to the potentially slipped market execution price.
+   // Replace the farthest opposing stop at a fixed offset from the TOUCHED
+   // virtual level, not from the potentially slipped market fill price.
    int farIndex=0;
    for(int j=1;j<g_gridCount[opposite];j++)
       if((opposite==GRID_SELL_STOP && g_grid[opposite][j]<g_grid[opposite][farIndex]) ||
          (opposite==GRID_BS && g_grid[opposite][j]>g_grid[opposite][farIndex])) farIndex=j;
    double old=g_grid[opposite][farIndex];
-   g_grid[opposite][farIndex]=touched;
+   double replacement=NP(touched+(kind==GRID_BS ? -GridOppositeOffsetPrice : GridOppositeOffsetPrice));
+   g_grid[opposite][farIndex]=replacement;
    Print("[GRID] ",(kind==GRID_BS ? "BUY STOP" : "SELL STOP")," touched at ",
          DoubleToString(touched,_Digits),"; moved farthest opposite from ",
-         DoubleToString(old,_Digits)," to ",DoubleToString(touched,_Digits),
+         DoubleToString(old,_Digits)," to ",DoubleToString(replacement,_Digits),
          "; levels buy=",g_gridCount[GRID_BS]," sell=",g_gridCount[GRID_SELL_STOP]);
 }
 int CountOtherModePositions(bool gridMode)
