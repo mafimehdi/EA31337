@@ -845,11 +845,8 @@ bool GridExecute(int kind,int index)
    if((buy && !AllowLong) || (!buy && !AllowShort)) return(false);
    if(MaxTradesPerDay>0 && g_entriesToday>=MaxTradesPerDay) return(false);
    if(CountMyOrders()>=MathMax(1,MaxOpenTrades)) return(false);
-   // Opposite side is blocked while any grid position remains open.
-   for(int i=OrdersTotal()-1;i>=0;i--)
-      if(OrderSelect(i,SELECT_BY_POS,MODE_TRADES) && OrderSymbol()==_Symbol &&
-         OrderMagicNumber()==MagicNumber && StringFind(OrderComment(),"VGRID")>=0 &&
-         ((buy && OrderType()==OP_SELL) || (!buy && OrderType()==OP_BUY))) return(false);
+   // Both directions may remain open simultaneously; only MaxOpenTrades
+   // and the standard entry gates cap additional grid positions.
    if(MaxSpreadPoints>0 && MarketInfo(_Symbol,MODE_SPREAD)>MaxSpreadPoints) return(false);
    RefreshRates();
    double spread=Ask-Bid;
