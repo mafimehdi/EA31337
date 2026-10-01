@@ -71,15 +71,14 @@ input ENUM_REVERSAL_PRIMARY ReversalPrimary=REV_AUTO;
 input bool ShowStatsTable=true;
 input int MagicNumber=20260927;
 input int Slippage=30;
-// Experimental virtual four-way ladder. No broker-side pending orders are placed.
+// Virtual buy-stop/sell-stop ladders. No broker-side pending orders are placed.
 enum ENUM_OPERATION_MODE { OPERATION_SIGNALS=0, OPERATION_VIRTUAL_GRID=1 };
 input ENUM_OPERATION_MODE OperationMode=OPERATION_SIGNALS;
 input int GridSteps=10;
 input double GridStepPrice=1.0;
-input double GridPairOffsetPrice=0.20;
+input double GridTouchSpreadPrice=0.30; // fixed quote gap used for virtual triggers only
 input double GridTakeProfitPrice=1.0;
 input double GridStopLossPrice=0.50;
-input double GridMinStopOverSpreadPrice=0.10; // extra price-distance above current spread
 
 
 #define ENGINE_PB 0
@@ -97,13 +96,10 @@ double g_profitDollar=0.0;
 int g_entriesToday=0;
 double g_dayStartEquity=0.0;
 #define GRID_CAP 100
-// BS/SL are outside; sell limit is above BS, buy limit below SL.
 #define GRID_BS 0
-#define GRID_SELL_LIMIT 1
-#define GRID_SELL_STOP 2
-#define GRID_BUY_LIMIT 3
-double g_grid[4][GRID_CAP];
-int g_gridCount[4];
+#define GRID_SELL_STOP 1
+double g_grid[2][GRID_CAP];
+int g_gridCount[2];
 bool g_gridReady=false;
 double g_prevAsk=0, g_prevBid=0;
 
@@ -661,8 +657,11 @@ void ShowStats()
    s+="Trades: "+IntegerToString(g_trades)+"  W:"+IntegerToString(g_wins)+"  L:"+IntegerToString(g_losses)+"  BE:"+IntegerToString(g_breakevens)+"\n";
    s+="Net$: "+DoubleToString(g_profitDollar,2)+"   PB "+IntegerToString(g_winsPB)+"/"+IntegerToString(g_tradesPB)+
       "   SP2L "+IntegerToString(g_winsSP)+"/"+IntegerToString(g_tradesSP)+"\n";
-   s+="Open: "+IntegerToString(CountMyOrders())+"/"+IntegerToString(MathMax(1,MaxOpenTrades))+
-      "  (per signal: "+IntegerToString(TradesPerSignal)+")\n";
+   if(OperationMode==OPERATION_VIRTUAL_GRID)
+      s+="Open grid: "+IntegerToString(CountMyOrders())+" (no EA count cap)\n";
+   else
+      s+="Open: "+IntegerToString(CountMyOrders())+"/"+IntegerToString(MathMax(1,MaxOpenTrades))+
+         "  (per signal: "+IntegerToString(TradesPerSignal)+")\n";
    string status="READY";
    if(UseTimeFilter && !InSession()) status="session closed";
    else if(!DailyLimitsOK()) status="DAILY LIMIT HIT";
@@ -705,8 +704,8 @@ int OnInit()
 {
    if(OperationMode!=OPERATION_SIGNALS && OperationMode!=OPERATION_VIRTUAL_GRID) return(INIT_PARAMETERS_INCORRECT);
    if((OperationMode==OPERATION_VIRTUAL_GRID) && (GridSteps<1 || GridSteps>GRID_CAP || GridStepPrice<=0 ||
-      GridPairOffsetPrice<=0 || GridPairOffsetPrice>=GridStepPrice ||
-      GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || GridMinStopOverSpreadPrice<0 || FixedLot<=0))
+      GridTouchSpreadPrice<0 || GridTouchSpreadPrice>=2*GridStepPrice ||
+      GridTakeProfitPrice<=0 || GridStopLossPrice<=0 || FixedLot<=0))
    { Print("[GRID] Invalid virtual grid inputs"); return(INIT_PARAMETERS_INCORRECT); }
    if(!(OperationMode==OPERATION_VIRTUAL_GRID) && !UseFixedDollarStop && !UseATRStopFloor)
    { Print("[!] Enable at least one initial SL mode."); return(INIT_PARAMETERS_INCORRECT); }
@@ -738,8 +737,16 @@ int OnInit()
          " | Reversal=",(UseReversal ? EnumToString(ReversalPrimary) : "off"));
    return(INIT_SUCCEEDED);
 }
-// Virtual levels are evaluated on ticks. A market order is sent only for the
-// first crossed level; hence an opposite virtual level cannot fill on that tick.
+// Fixed spread affects virtual trigger quotes ONLY. OrderSend always uses
+// the real broker Ask/Bid; a terminal cannot impose a broker spread of 0.30.
+double GridAsk()
+{
+   return((Ask+Bid)/2.0+GridTouchSpreadPrice/2.0);
+}
+double GridBid()
+{
+   return((Ask+Bid)/2.0-GridTouchSpreadPrice/2.0);
+}
 void GridRemove(int kind,int index)
 {
    for(int j=index;j<g_gridCount[kind]-1;j++) g_grid[kind][j]=g_grid[kind][j+1];
@@ -749,86 +756,44 @@ void GridStart()
 {
    RefreshRates();
    double mid=(Ask+Bid)/2.0;
-   for(int k=0;k<4;k++) g_gridCount[k]=0;
-   for(int i=1;i<=GridSteps;i++)
+   for(int i=0;i<GridSteps;i++)
    {
-      double up=mid+i*GridStepPrice, down=mid-i*GridStepPrice;
-      g_grid[GRID_BS][i-1]=NP(up);
-      g_grid[GRID_SELL_LIMIT][i-1]=NP(up+GridPairOffsetPrice);
-      g_grid[GRID_SELL_STOP][i-1]=NP(down);
-      g_grid[GRID_BUY_LIMIT][i-1]=NP(down-GridPairOffsetPrice);
+      g_grid[GRID_BS][i]=NP(mid+(i+1)*GridStepPrice);
+      g_grid[GRID_SELL_STOP][i]=NP(mid-(i+1)*GridStepPrice);
    }
-   for(int k=0;k<4;k++) g_gridCount[k]=GridSteps;
-   g_prevAsk=Ask; g_prevBid=Bid; g_gridReady=true;
-   Print("[GRID] Virtual levels anchored at ",DoubleToString(mid,_Digits),
-         "; no broker pending orders. State resets on EA restart.");
-}
-// A fixed count of levels is not enough: each order type must still have
-// a nearby level on its correct side of the CURRENT price. Re-anchor when a
-// ladder has fallen behind by its FULL configured range, not one step.
-bool GridNeedsRecenter()
-{
-   double mid=(Ask+Bid)/2.0;
-   double maxGap=GridSteps*GridStepPrice+GridPairOffsetPrice;
-   for(int k=0;k<4;k++)
-   {
-      bool upper=(k==GRID_BS || k==GRID_SELL_LIMIT);
-      double closest=1e100;
-      for(int j=0;j<g_gridCount[k];j++)
-      {
-         double gap=upper ? g_grid[k][j]-mid : mid-g_grid[k][j];
-         if(gap>0 && gap<closest) closest=gap;
-      }
-      if(closest>maxGap) return(true);
-   }
-   return(false);
+   g_gridCount[GRID_BS]=GridSteps;
+   g_gridCount[GRID_SELL_STOP]=GridSteps;
+   g_prevAsk=GridAsk(); g_prevBid=GridBid(); g_gridReady=true;
+   Print("[GRID] ",GridSteps,"+",GridSteps," virtual stop levels anchored at ",DoubleToString(mid,_Digits),
+         "; no broker pending orders. Levels reset on EA restart.");
 }
 bool GridCrossed(int kind,double level)
 {
-   if(kind==GRID_BS) return(g_prevAsk<level && Ask>=level);
-   if(kind==GRID_BUY_LIMIT) return(g_prevAsk>level && Ask<=level);
-   if(kind==GRID_SELL_STOP) return(g_prevBid>level && Bid<=level);
-   return(g_prevBid<level && Bid>=level);
-}
-void GridExtend(int kind,double removedLevel)
-{
-   bool upper=(kind==GRID_BS || kind==GRID_SELL_LIMIT);
-   double edge=removedLevel;
-   for(int j=0;j<g_gridCount[kind];j++)
-      edge=upper ? MathMax(edge,g_grid[kind][j]) : MathMin(edge,g_grid[kind][j]);
-   if(g_gridCount[kind]<GRID_CAP)
-      g_grid[kind][g_gridCount[kind]++]=NP(edge+(upper ? GridStepPrice : -GridStepPrice));
+   if(kind==GRID_BS) return(g_prevAsk<level && GridAsk()>=level);
+   return(g_prevBid>level && GridBid()<=level);
 }
 void GridAfterFill(int kind,int index)
 {
-   bool buy=(kind==GRID_BS || kind==GRID_BUY_LIMIT);
-   double filledLevel=g_grid[kind][index];
+   double touched=g_grid[kind][index];
+   int opposite=(kind==GRID_BS ? GRID_SELL_STOP : GRID_BS);
    GridRemove(kind,index);
-   // Cancel the farthest opposite level, then replenish BOTH ladders outward:
-   // cancellation has a real effect (the old level is gone), but each kind
-   // retains GridSteps levels rather than eventually shrinking to zero.
-   int oppositeA=buy ? GRID_SELL_LIMIT : GRID_BS;
-   int oppositeB=buy ? GRID_SELL_STOP : GRID_BUY_LIMIT;
-   int farKind=-1,farIndex=-1; double farDist=-1,mid=(Ask+Bid)/2.0;
-   for(int k=0;k<2;k++)
-   {
-      int t=(k==0 ? oppositeA : oppositeB);
-      for(int j=0;j<g_gridCount[t];j++)
-      {
-         double d=MathAbs(g_grid[t][j]-mid);
-         if(d>farDist) { farDist=d; farKind=t; farIndex=j; }
-      }
-   }
-   if(farKind>=0)
-   {
-      double cancelled=g_grid[farKind][farIndex];
-      GridRemove(farKind,farIndex);
-      GridExtend(farKind,cancelled);
-   }
-   GridExtend(kind,filledLevel);
-   Print("[GRID] filled kind=",kind,"; replaced farthest opposite kind=",farKind,
-         "; extended filled ladder; virtual levels=",
-         g_gridCount[0]+g_gridCount[1]+g_gridCount[2]+g_gridCount[3]);
+   // Extend the filled ladder by one full price step past the prior edge.
+   double edge=touched;
+   for(int j=0;j<g_gridCount[kind];j++)
+      edge=(kind==GRID_BS ? MathMax(edge,g_grid[kind][j]) : MathMin(edge,g_grid[kind][j]));
+   g_grid[kind][g_gridCount[kind]++]=NP(edge+(kind==GRID_BS ? GridStepPrice : -GridStepPrice));
+   // Move the farthest opposing virtual stop to the exact TOUCHED level,
+   // not to the potentially slipped market execution price.
+   int farIndex=0;
+   for(int j=1;j<g_gridCount[opposite];j++)
+      if((opposite==GRID_SELL_STOP && g_grid[opposite][j]<g_grid[opposite][farIndex]) ||
+         (opposite==GRID_BS && g_grid[opposite][j]>g_grid[opposite][farIndex])) farIndex=j;
+   double old=g_grid[opposite][farIndex];
+   g_grid[opposite][farIndex]=touched;
+   Print("[GRID] ",(kind==GRID_BS ? "BUY STOP" : "SELL STOP")," touched at ",
+         DoubleToString(touched,_Digits),"; moved farthest opposite from ",
+         DoubleToString(old,_Digits)," to ",DoubleToString(touched,_Digits),
+         "; levels buy=",g_gridCount[GRID_BS]," sell=",g_gridCount[GRID_SELL_STOP]);
 }
 int CountOtherModePositions(bool gridMode)
 {
@@ -841,12 +806,10 @@ int CountOtherModePositions(bool gridMode)
 }
 bool GridExecute(int kind,int index)
 {
-   bool buy=(kind==GRID_BS || kind==GRID_BUY_LIMIT);
+   bool buy=(kind==GRID_BS);
    if((buy && !AllowLong) || (!buy && !AllowShort)) return(false);
-   if(MaxTradesPerDay>0 && g_entriesToday>=MaxTradesPerDay) return(false);
-   if(CountMyOrders()>=MathMax(1,MaxOpenTrades)) return(false);
-   // Add same-direction positions up to MaxOpenTrades, but never hedge a
-   // currently open grid position with the opposite direction.
+   // No configured trade-count cap in grid mode. Broker margin still applies.
+   // Same-direction positions may stack; never hedge an open grid position.
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
@@ -854,19 +817,12 @@ bool GridExecute(int kind,int index)
       if(StringFind(OrderComment(),"VGRID")<0) continue;
       if((buy && OrderType()==OP_SELL) || (!buy && OrderType()==OP_BUY)) return(false);
    }
-   if(MaxSpreadPoints>0 && MarketInfo(_Symbol,MODE_SPREAD)>MaxSpreadPoints) return(false);
+   // No spread gate in virtual mode. Real broker spread still affects fill
+   // price and whether a protective stop meets broker minimum distances.
    RefreshRates();
-   double spread=Ask-Bid;
-   if(GridStopLossPrice<=spread+GridMinStopOverSpreadPrice)
-   {
-      Print("[GRID] Entry skipped: SL distance ",DoubleToString(GridStopLossPrice,_Digits),
-            " <= spread ",DoubleToString(spread,_Digits)," + safety ",
-            DoubleToString(GridMinStopOverSpreadPrice,_Digits));
-      return(false);
-   }
    double price=NP(buy ? Ask : Bid), stop=NP(buy ? price-GridStopLossPrice : price+GridStopLossPrice);
    double tp=NP(buy ? price+GridTakeProfitPrice : price-GridTakeProfitPrice);
-   if(GridStopLossPrice<MinStopDist() || GridTakeProfitPrice<MinStopDist())
+   if(GridStopLossPrice<MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point || GridTakeProfitPrice<MarketInfo(_Symbol,MODE_STOPLEVEL)*_Point)
    { Print("[GRID] Stop/target below broker minimum; no order sent"); return(false); }
    int op=buy ? OP_BUY : OP_SELL;
    double lot=NormalizeLot(FixedLot);
@@ -885,29 +841,53 @@ void GridTick()
 {
    if(!g_gridReady) { GridStart(); return; }
    RefreshRates();
+   // Retain the daily loss brake, but do not apply MaxTradesPerDay to
+   // the requested uncapped grid mode.
+   bool lossOK=(MaxDailyLossUSD<=0 || g_dayStartEquity<=0 ||
+                g_dayStartEquity-AccountEquity()<MaxDailyLossUSD);
    bool filled=false;
-   if(InSession() && DailyLimitsOK())
+   if(InSession() && lossOK)
    {
+      int openDir=0;
+      for(int i=OrdersTotal()-1;i>=0;i--)
+         if(OrderSelect(i,SELECT_BY_POS,MODE_TRADES) && OrderSymbol()==_Symbol &&
+            OrderMagicNumber()==MagicNumber && StringFind(OrderComment(),"VGRID")>=0)
+         {
+            if(OrderType()==OP_BUY) openDir=1;
+            else if(OrderType()==OP_SELL) openDir=-1;
+         }
       int chosenKind=-1,chosenIndex=-1; double nearest=1e100;
-      for(int k=0;k<4;k++) for(int j=0;j<g_gridCount[k];j++)
+      for(int k=0;k<2;k++) for(int j=0;j<g_gridCount[k];j++)
       {
+         if((openDir>0 && k==GRID_SELL_STOP) || (openDir<0 && k==GRID_BS)) continue;
          double level=g_grid[k][j];
          if(!GridCrossed(k,level)) continue;
-         double d=MathMin(MathAbs(level-g_prevAsk),MathAbs(level-g_prevBid));
+         double d=MathAbs(level-(k==GRID_BS ? g_prevAsk : g_prevBid));
          if(d<nearest) { nearest=d; chosenKind=k; chosenIndex=j; }
       }
       if(chosenKind>=0) filled=GridExecute(chosenKind,chosenIndex);
    }
-   // Check re-anchoring AFTER processing the old levels: a level crossed on
-   // this tick must not disappear just because the price moved past it.
-   // Wait until the next tick after a fill before rebuilding any ladders.
-   if(!filled && GridNeedsRecenter())
+   // A multi-step quote gap can leap over all ten levels without triggering
+   // each one. Rebuild only when one entire ladder is behind the quote and
+   // no grid position is open; ordinary touches never cause re-anchoring.
+   bool buyAhead=false,sellBelow=false,hasGridPosition=false;
+   for(int j=0;j<g_gridCount[GRID_BS];j++)
+      if(g_grid[GRID_BS][j]>GridAsk()) buyAhead=true;
+   for(int j=0;j<g_gridCount[GRID_SELL_STOP];j++)
+      if(g_grid[GRID_SELL_STOP][j]<GridBid()) sellBelow=true;
+   for(int i=OrdersTotal()-1;i>=0;i--)
+      if(OrderSelect(i,SELECT_BY_POS,MODE_TRADES) && OrderSymbol()==_Symbol &&
+         OrderMagicNumber()==MagicNumber && StringFind(OrderComment(),"VGRID")>=0)
+         hasGridPosition=true;
+   if(!filled && !hasGridPosition && (!buyAhead || !sellBelow))
    {
-      Print("[GRID] Levels drifted beyond ladder range; re-anchoring virtual levels only. Open positions unchanged.");
+      Print("[GRID] Full ladder crossed by quote gap; rebuilding 10+10 levels around current price.");
       GridStart();
-      return; // never fill a newly created level on the same tick
+      return;
    }
-   g_prevAsk=Ask; g_prevBid=Bid;
+   // Levels are rolling ladders, not reset around current price after fills.
+   // This preserves the opposite stop installed at the touched level.
+   g_prevAsk=GridAsk(); g_prevBid=GridBid();
 }
 void OnDeinit(const int reason) { Comment(""); }
 void OnTick()
