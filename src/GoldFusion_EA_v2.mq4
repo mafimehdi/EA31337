@@ -763,6 +763,26 @@ void GridStart()
    Print("[GRID] Virtual levels anchored at ",DoubleToString(mid,_Digits),
          "; no broker pending orders. State resets on EA restart.");
 }
+// A fixed count of levels is not enough: each order type must still have
+// a nearby level on its correct side of the CURRENT price. Re-anchor when a
+// ladder has fallen behind or its nearest level has drifted too far away.
+bool GridNeedsRecenter()
+{
+   double mid=(Ask+Bid)/2.0;
+   double maxGap=2.0*GridStepPrice+GridPairOffsetPrice;
+   for(int k=0;k<4;k++)
+   {
+      bool upper=(k==GRID_BS || k==GRID_SELL_LIMIT);
+      double closest=1e100;
+      for(int j=0;j<g_gridCount[k];j++)
+      {
+         double gap=upper ? g_grid[k][j]-mid : mid-g_grid[k][j];
+         if(gap>0 && gap<closest) closest=gap;
+      }
+      if(closest>maxGap) return(true);
+   }
+   return(false);
+}
 bool GridCrossed(int kind,double level)
 {
    if(kind==GRID_BS) return(g_prevAsk<level && Ask>=level);
@@ -861,6 +881,12 @@ void GridTick()
 {
    if(!g_gridReady) { GridStart(); return; }
    RefreshRates();
+   if(GridNeedsRecenter())
+   {
+      Print("[GRID] Levels drifted from current price; re-anchoring virtual levels only. Open positions unchanged.");
+      GridStart();
+      return; // never fill a newly created level on the same tick
+   }
    if(InSession() && DailyLimitsOK())
    {
       int chosenKind=-1,chosenIndex=-1; double nearest=1e100;
