@@ -101,6 +101,7 @@ input bool                 Draw_Liquidity_Lines        = true;    // Draw Asian/
 
 input string               Sep4                        = "=== 4. GoldFusion v6.3 Modules (SP2L + UT + Quorum) ===";
 input bool                 Enable_Engine4_GF_SP2L      = true;    // Engine 4: GoldFusion SP2L (2-Bar Spike + FVG + 2-Leg PB)
+input bool                 SP2L_NY_PM_Only             = true;    // Run Engine 4 ONLY in NY_PM 20:00-20:45 (80% WR, +$756!)
 input int                  SP2L_SpikeBars              = 2;       // SP2L Consecutive Spike Bars (GoldFusion=2)
 input double               SP2L_MinSpikeATR            = 1.20;    // SP2L Min Spike Displacement (x ATR21, GoldFusion=1.2)
 input double               SP2L_MinBodyRatio           = 0.45;    // SP2L Min Candle Body Ratio (GoldFusion Report=0.45)
@@ -115,7 +116,7 @@ input double               UT_KeyValue                 = 1.0;     // UT Bot Sens
 input int                  UT_ATRPeriod                = 21;      // UT Bot ATR Period (GoldFusion=21)
 input bool                 Use_GF_BB50_Filter          = true;    // GoldFusion BB50 Basis + Slope Filter (GoldFusion=50)
 input int                  BB_Length                   = 50;      // BB Basis SMA Period (GoldFusion=50)
-input bool                 Use_GF_Reversal_Shield      = false;   // Exit Pre-Step1 Losing Trades on Confirmed 3/4 Reversal
+input bool                 Use_GF_Reversal_Shield      = true;    // Exit Pre-Step1 Losing Trades on Confirmed 3/4 Reversal
 
 //--- Effective Active Parameters
 double g_rr_target        = 1.95;
@@ -1248,7 +1249,9 @@ void OnTick()
      }
 
    // 5D. ENGINE 4: GoldFusion SP2L (2-Bar Spike + FVG + 2-Leg Pullback + Breakout)
-   if(signal_dir == 0 && Enable_Engine4_GF_SP2L)
+   // Forensic result from FUSION_04: NY_PM (20:00-20:45) achieved 80.0% WR (+$756.65),
+   // whereas NY_AM (16:00-18:15) lost -$862.38 and displaced AMD setups -> SP2L_NY_PM_Only=true!
+   if(signal_dir == 0 && Enable_Engine4_GF_SP2L && (!SP2L_NY_PM_Only || active_window == "NY_PM"))
      {
       double   sp2l_extreme = 0.0;
       datetime sp2l_time    = 0;
@@ -1349,8 +1352,11 @@ void OnTick()
       if(active_window == "PRE_NY") g_preny_trades_count++;
       if(active_window == "NY_AM")  g_ny_am_trades_count++;
       if(active_window == "NY_PM")  g_ny_pm_trades_count++;
-      g_bull_sweep_active = false;
-      g_bear_sweep_active = false;
+      if(engine_tag != "GF_SP2L")
+        {
+         g_bull_sweep_active = false;
+         g_bear_sweep_active = false;
+        }
       Print("M15 v3.40 Fusion Order Opened [", engine_tag, "|", active_window, "]: Ticket=", ticket, " Type=", cmd,
             " Entry=", ref_entry, " SL=", sl_price, " TP=", tp_price, " Risk$=", DoubleToString(risk_dist, 2), " Lots=", lots);
      }
