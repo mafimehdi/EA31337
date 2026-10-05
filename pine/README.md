@@ -82,7 +82,7 @@ the same fills, no lookahead.
 
 ## 3. Zero-repaint guarantees
 
-* `calc_on_every_tick = false`; **no** `request.security()`, **no** `lookahead`,
+* nothing runs per tick: the whole state machine lives inside `if barstate.isconfirmed and bar_index >= 250`; **no** `request.security()`, **no** `lookahead`,
   **no** negative `offset`, **no** `security()`-based higher-timeframe data.
 * The entire state machine runs inside `if barstate.isconfirmed`, so a signal, marker,
   level or statistic is written **only** when a bar has closed and can never be redrawn.

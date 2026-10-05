@@ -35,7 +35,8 @@
 //     diagonal bid/ask imbalances) over the most recent bars — see the disclaimer below.
 //
 //  ZERO-REPAINT DESIGN
-//    • calc_on_every_tick = false, no request.security(), no lookahead, no offsets.
+//    • no per-tick evaluation (the whole state machine is inside barstate.isconfirmed),
+//      no request.security(), no lookahead, no negative plot offsets.
 //    • Every signal is evaluated on CLOSED bar data only and frozen with
 //      `barstate.isconfirmed` (a marker can never appear, move or disappear later).
 //    • The EA reads Bar[1] at the open of Bar[0]; this port reads Bar[0] at its close —
@@ -51,9 +52,8 @@
 //    • One position at a time (same as the EA: `active_cnt > 0 → return`).
 //    • Swap/rollover is not modelled (commission input is provided).
 // ═══════════════════════════════════════════════════════════════════════════
-indicator("XAUUSD AMD + GoldFusion v3.40 [Pine Port]", "AMD Fusion v3.40",
+indicator("XAUUSD AMD + GoldFusion v3.40 [Pine Port]", "AMD v3.40",
      overlay              = true,
-     calc_on_every_tick   = false,
      max_boxes_count      = 500,
      max_lines_count      = 500,
      max_labels_count     = 500)
@@ -349,6 +349,12 @@ var float buyPnl          = 0.0
 var int   sellTrades      = 0
 var int   sellWins        = 0
 var float sellPnl         = 0.0
+
+// Per-window order counters (incremented when the order is *placed*, like the EA)
+var int   lonTradesC      = 0
+var int   preNyTradesC    = 0
+var int   nyAmTradesC     = 0
+var int   nyPmTradesC     = 0
 
 // Per-engine (0 AMD, 1 L3_SWEEP, 2 SILVER_B, 3 GF_SP2L, 4 other) and
 // per-window (0 NY_AM, 1 NY_PM, 2 PRE_NY, 3 LON10, 4 other) breakdowns
@@ -1581,7 +1587,7 @@ if showFootprint and barstate.islast and bar_index > fpBars + 3
                 wSum := wSum + array.get(wts, r)
             if wSum > 0
                 float bestV = -1.0
-                int   bestR = 0
+                int   bestRow = 0
                 for r = 0 to R - 1
                     float vRow = vo_ * array.get(wts, r) / wSum
                     float mid  = lo_ + (r + 0.5) * rowH
@@ -1593,15 +1599,15 @@ if showFootprint and barstate.islast and bar_index > fpBars + 3
                     array.set(totV,  b * R + r, vRow)
                     if vRow > bestV
                         bestV := vRow
-                        bestR := r
-                array.set(pocIx, b, bestR)
+                        bestRow := r
+                array.set(pocIx, b, bestRow)
                 float colDelta = 0.0
                 for r = 0 to R - 1
                     colDelta := colDelta + array.get(buyV, b * R + r) - array.get(sellV, b * R + r)
                 cvd := cvd + colDelta
                 if b == 0
                     fpLastDlt := colDelta
-                    fpPocPx   := lo_ + (bestR + 0.5) * rowH
+                    fpPocPx   := lo_ + (bestRow + 0.5) * rowH
     fpCvd := cvd
     // max |delta| for colour scaling
     float maxD = 0.0
