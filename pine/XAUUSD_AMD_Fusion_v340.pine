@@ -5,7 +5,11 @@
 //  Port      : EA31337 Quantitative Research
 //
 //  WHAT THIS SCRIPT DOES
-//  1. It re-implements the EA's full decision engine bar-for-bar:
+//  1. The default mode is chart-first: it plots the technical indicators and zones
+//     with strategy signal generation and trade simulation switched OFF. Enable
+//     `Enable strategy signals + trade simulation` to turn on the EA-style engines,
+//     non-repainting entry/outcome labels, trade management, and statistics.
+//  2. The optional strategy engine re-implements the EA's decision logic bar-for-bar:
 //        • Self-contained session tracking (Asian / London / Midnight Open / PDH-PDL)
 //        • AMD liquidity sweep state machine (6 SSL + 6 BSL pools, ATR-gated penetration)
 //        • Engine 1  AMD external/session sweep + displacement + MSS
@@ -23,15 +27,13 @@
 //        • 3-stage Step-Lock trailing (+0.92R->+0.60R & 50% partial, +1.30R->+1.15R,
 //          +1.62R->+1.50R)
 //        • Step compounding lot sizing (+0.01 lot per $165 balance, 3.0% risk floor)
-//  2. It VISUALISES everything the MT4 chart never showed: killzone backgrounds, all
-//     liquidity pools, sweep/manipulation zones, FVG gaps, EMA ribbon, UT-Bot trailing
-//     line, BB50 basis, pending limit orders, entry/SL/TP ladders, Step-Lock stages,
-//     engine tags, R-multiples and per-trade dollar results.
-//  3. It keeps a FULL statistical ledger (trades, wins, losses, TP hits, SL hits,
+//  3. It VISUALISES the analysis layers independently of the strategy engines: killzone
+//     backgrounds, liquidity pools, sweep/manipulation zones, FVGs, EMA ribbon, UT-Bot
+//     trail and BB50 basis. Full analysis adds trade artwork and the optional footprint.
+//  4. When enabled, it keeps a FULL statistical ledger (trades, wins/losses, TP/SL hits,
 //     Step-Lock exits, shield exits, win rate, gross/net $, profit factor, expectancy,
-//     average R, max drawdown, BUY vs SELL, per-engine and per-window breakdowns) in
-//     on-chart tables.
-//  4. It adds an APPROXIMATED FOOTPRINT (price-level volume + estimated delta, POC and
+//     average R, max drawdown, BUY vs SELL, per-engine and per-window breakdowns).
+//  5. It adds an APPROXIMATED FOOTPRINT (price-level volume + estimated delta, POC and
 //     diagonal bid/ask imbalances) over the most recent bars — see the disclaimer below.
 //
 //  ZERO-REPAINT DESIGN
@@ -107,7 +109,7 @@ intrabarMode       = input.string("Pessimistic (SL first)", "Intra-Bar Fill Assu
 // ─────────────────────────────── 2 · WINDOWS ───────────────────────────────
 string G2 = "2 · Micro-Killzone Windows (Broker Time)"
 tradeAllDay        = input.bool (false, "24-hour trading (ignore time windows)", group = G2,
-     tooltip = "ON = allow signals all day, bypass session windows/caps, NY_PM-only, whip/late-buy time blocks, and NY end-of-session closing. OFF = use the configured broker-time windows below.")
+     tooltip = "ON = track sweeps all day and, when the optional signal engine is enabled, allow signals all day; bypass session windows/caps, NY_PM-only, whip/late-buy time blocks and NY end-of-session closing. OFF = use the configured broker-time windows below.")
 entryModeStr       = input.string("15% Shallow FVG Limit (1-bar expiry)", "Entry Mode",
      options = ["15% Shallow FVG Limit (1-bar expiry)", "Market on Confirmation Close"], group = G2)
 fvgPullback        = input.float(0.15, "Shallow FVG Pullback Ratio", minval = 0.0, maxval = 0.9, step = 0.01, group = G2)
@@ -166,16 +168,20 @@ useShield          = input.bool (true, "Pre-Step1 Confirmed-Reversal Quorum Shie
 
 // ─────────────────────────────── 5 · VISUALS ───────────────────────────────
 string G5 = "5 · Chart Visualisation (the parts MT4 never drew)"
-chartLayout        = input.string("Clean (signals + results)", "Chart Layout",
-     options = ["Clean (signals + results)", "Full analysis"], group = G5,
-     tooltip = "Clean keeps recent signal/result labels, the active trade ladder and compact stats. Full analysis enables the extra overlays and tables.")
+chartLayout        = input.string("Technical analysis", "Chart Layout",
+     options = ["Technical analysis", "Full analysis"], group = G5,
+     tooltip = "Technical analysis shows selected indicators and zones without large panels. Full analysis adds the dashboard, trade artwork and optional footprint; simulation tables appear when the signal engine is enabled.")
+enableSignalEngine = input.bool(false, "Enable strategy signals + trade simulation", group = G5,
+     tooltip = "OFF by default: skips entry detection and simulated trade management while keeping the sweep tracking required to draw zones. ON to add entry/exit labels and simulated TP/SL/P&L statistics.")
 recentSignalCount  = input.int(30, "Recent signal results to keep", minval = 30, maxval = 100, group = G5,
-     tooltip = "Keep the newest 30 to 100 accepted signals on-chart. Each label updates to OPEN, TP HIT, SL HIT, or its final exit status.")
+     tooltip = "When the signal engine is enabled, keep the newest 30 to 100 accepted signals on-chart, with their final outcomes.")
 showKillzones      = input.bool (true, "Killzone Session Backgrounds", group = G5)
 showLiquidity      = input.bool (true, "Liquidity Levels (Asian/London/PDH/PDL/Midnight)", group = G5)
 showSweepZones     = input.bool (true, "Sweep + Manipulation Zones", group = G5)
 showFVG            = input.bool (true, "Fair Value Gaps", group = G5)
 fvgExtendBars      = input.int  (24,   "FVG Box Length (bars)", minval = 3, maxval = 200, group = G5)
+fvgOnlyInTrack     = input.bool (false,"Restrict FVGs to sweep-tracking hours", group = G5)
+fvgZonesToKeep     = input.int  (100,  "Recent FVG zones to keep", minval = 20, maxval = 200, group = G5)
 showEmaRibbon      = input.bool (true, "EMA 20 / 50 / 200 Ribbon", group = G5)
 showUtBot          = input.bool (true, "UT-Bot Trailing Line", group = G5)
 showBB50           = input.bool (true, "BB50 Basis Line", group = G5)
@@ -240,7 +246,7 @@ bool  fullChart   = chartLayout == "Full analysis"
 bool  cleanChart  = not fullChart
 bool  pSkipWhip   = skipWhip and not allDayMode
 bool  pSkipLate   = skipLateBuys and not allDayMode
-bool  drawPending = showPending and fullChart
+bool  drawPending = showPending and fullChart and enableSignalEngine
 float pPullback   = fvgPullback
 int   pExpiry     = pendingExpiryBars
 bool  pMarketEntry = entryModeStr == "Market on Confirmation Close"
@@ -393,6 +399,10 @@ var line  bearSweepLn  = na
 var box   bearSweepBx  = na
 var array<box>   fpBoxes  = array.new<box>()
 var array<label> fpLabels = array.new<label>()
+var array<box>   fvgZoneBoxes = array.new<box>()
+var array<box>   sweepZoneBoxes = array.new<box>()
+var array<line>  sweepZoneLines = array.new<line>()
+var array<label> sweepZoneLabels = array.new<label>()
 var table statsTbl     = na
 var table brkTbl       = na
 var table dashTbl      = na
@@ -529,7 +539,7 @@ f_sp2l(bool bullBias, bool bearBias, bool bullCQ, bool bearCQ, float atr21, int 
     int   tOut   = na
     int n    = math.max(1, math.round(sp2lSpikeBars))
     int maxM = math.max(2, math.round(sp2lMaxLegBars) + 1)
-    if atr21 > 0
+    if enableSignalEngine and atr21 > 0
         bool doneBull = false
         if bullBias and bullCQ and close > open and close > high[1]
             for m = 1 to maxM
@@ -612,7 +622,7 @@ f_sp2l(bool bullBias, bool bearBias, bool bullCQ, bool bearCQ, float atr21, int 
 f_pbVote(float ema50s, float ema200s) =>
     int v = 0
     float e200 = ema200s
-    if e200 > 0
+    if enableSignalEngine and e200 > 0
         if close > e200 and close > open and close > high[1]
             for k = 0 to 13
                 if low[k] <= ema50s[k] and close[k] > ema200s[k]
@@ -714,7 +724,7 @@ if minNextG >= 60
     minNextG := minNextG - 60
 if hrNextG >= 24
     hrNextG := hrNextG - 24
-bool isLateBuyG = pSkipLate and ((hrNextG == 18 and minNextG >= 15) or (hrNextG == 20 and minNextG >= 35))
+bool isLateBuyG = enableSignalEngine and pSkipLate and ((hrNextG == 18 and minNextG >= 15) or (hrNextG == 20 and minNextG >= 35))
 
 // Strict M15 trend + slope engine (identical to section 4 of the MQL source)
 bool bullBiasG = close > ema200 and ema50 > ema200 and not isLateBuyG
@@ -834,14 +844,14 @@ if barstate.isconfirmed and bar_index >= 250
 
     // ═══════════════ PHASE A · execution of the previous bar's intent ═══════
     // (the EA sends its order on the first tick of the NEXT bar)
-    if intentDir != 0 and not na(intentBar) and intentBar < bar_index - 1
+    if enableSignalEngine and intentDir != 0 and not na(intentBar) and intentBar < bar_index - 1
         if not na(activeSignalLabel)
             label.set_text(activeSignalLabel, "NO ORDER · STALE SIGNAL")
             label.set_color(activeSignalLabel, color.new(color.gray, 0))
             label.set_textcolor(activeSignalLabel, color.white)
             activeSignalLabel := na
         intentDir := 0
-    if intentDir != 0 and intentBar == bar_index - 1
+    if enableSignalEngine and intentDir != 0 and intentBar == bar_index - 1
         int   dir   = intentDir
         float manip = intentExtreme
         float atrI  = nz(intentAtr, atr1)
@@ -1014,7 +1024,7 @@ if barstate.isconfirmed and bar_index >= 250
         intentDir := 0
 
     // ═══════════════ PHASE A2 · pending limit management ═══════════════════
-    if pendDir != 0 and bar_index > pendCreatedBar
+    if enableSignalEngine and pendDir != 0 and bar_index > pendCreatedBar
         int  alive = bar_index - pendCreatedBar
         int  expiredDir = pendDir
         bool eod   = closeAtNyEnd and not allDayMode and ((nyBar >= 16.0 and nyBar < 18.0) or brkBar >= 22.85)
@@ -1083,7 +1093,7 @@ if barstate.isconfirmed and bar_index >= 250
 
     // ═══════════════ PHASE A3 · open-position management ═══════════════════
     // 3-stage Step-Lock ladder + SL/TP resolution (ManageOpenPositions)
-    if posDir != 0
+    if enableSignalEngine and posDir != 0
         bool  sameBar = posEntryTime == time
         bool  canExit = not (sameBar and noSameBar)
         float sl0     = posSL
@@ -1283,14 +1293,21 @@ if barstate.isconfirmed and bar_index >= 250
                     bearSweepTime   := time
                     break
 
-    if showSweepZones and fullChart
+    if showSweepZones
         if bullSweepActive
             float topB = math.max(bullSweptLevel, bullManipLow)
             float botB = math.min(bullSweptLevel, bullManipLow)
             if na(bullSweepBx)
                 bullSweepBx := box.new(nz(bullSweepTime, time), topB, time, botB, color.new(#26A69A, 45), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#26A69A, 86))
                 bullSweepLn := line.new(nz(bullSweepTime, time), bullSweptLevel, time, bullSweptLevel, xloc.bar_time, extend.right, color.new(#26A69A, 25), line.style_dashed, 1)
-                label.new(nz(bullSweepTime, time), botB, "SSL SWEPT\n" + f_px(bullSweptLevel), xloc.bar_time, yloc.price, color.new(#26A69A, 75), label.style_label_up, color.white, size.tiny)
+                label bullSweepLabel = label.new(nz(bullSweepTime, time), botB, "SSL SWEPT\n" + f_px(bullSweptLevel), xloc.bar_time, yloc.price, color.new(#26A69A, 75), label.style_label_up, color.white, size.tiny)
+                array.push(sweepZoneBoxes, bullSweepBx)
+                array.push(sweepZoneLines, bullSweepLn)
+                array.push(sweepZoneLabels, bullSweepLabel)
+                if array.size(sweepZoneBoxes) > 100
+                    box.delete(array.shift(sweepZoneBoxes))
+                    line.delete(array.shift(sweepZoneLines))
+                    label.delete(array.shift(sweepZoneLabels))
             else
                 box.set_right(bullSweepBx, time)
                 box.set_bottom(bullSweepBx, botB)
@@ -1307,7 +1324,14 @@ if barstate.isconfirmed and bar_index >= 250
             if na(bearSweepBx)
                 bearSweepBx := box.new(nz(bearSweepTime, time), topR, time, botR, color.new(#FF5252, 45), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#FF5252, 86))
                 bearSweepLn := line.new(nz(bearSweepTime, time), bearSweptLevel, time, bearSweptLevel, xloc.bar_time, extend.right, color.new(#FF5252, 25), line.style_dashed, 1)
-                label.new(nz(bearSweepTime, time), topR, "BSL SWEPT\n" + f_px(bearSweptLevel), xloc.bar_time, yloc.price, color.new(#FF5252, 75), label.style_label_down, color.white, size.tiny)
+                label bearSweepLabel = label.new(nz(bearSweepTime, time), topR, "BSL SWEPT\n" + f_px(bearSweptLevel), xloc.bar_time, yloc.price, color.new(#FF5252, 75), label.style_label_down, color.white, size.tiny)
+                array.push(sweepZoneBoxes, bearSweepBx)
+                array.push(sweepZoneLines, bearSweepLn)
+                array.push(sweepZoneLabels, bearSweepLabel)
+                if array.size(sweepZoneBoxes) > 100
+                    box.delete(array.shift(sweepZoneBoxes))
+                    line.delete(array.shift(sweepZoneLines))
+                    label.delete(array.shift(sweepZoneLabels))
             else
                 box.set_right(bearSweepBx, time)
                 box.set_top(bearSweepBx, topR)
@@ -1321,7 +1345,7 @@ if barstate.isconfirmed and bar_index >= 250
 
     // ═══════════════ PHASE C3 · pre-Step1 reversal-quorum shield ═══════════
     shieldFired := false
-    if inTrack and useShield and posDir != 0 and not exitNow and pbVote != 0
+    if enableSignalEngine and inTrack and useShield and posDir != 0 and not exitNow and pbVote != 0
         int votes = 1
         if posDir == 1 and pbVote == -1
             if bearSweepActive
@@ -1353,7 +1377,7 @@ if barstate.isconfirmed and bar_index >= 250
                 lastEvent   := "SHIELD EXIT (quorum " + str.tostring(votes) + "/4)"
 
     // ═══════════════ LEDGER · partial close + trade close ══════════════════
-    if posDir != 0 and takePartialNow and not posPartDone and not na(partialPx)
+    if enableSignalEngine and posDir != 0 and takePartialNow and not posPartDone and not na(partialPx)
         float partLots = f_normLots(posLots * partialPct / 100.0)
         if partLots >= minLotIn and posLots - partLots >= minLotIn
             posRealized := posRealized + (partialPx - posEntry) * posDir * partLots * contractSize
@@ -1364,7 +1388,7 @@ if barstate.isconfirmed and bar_index >= 250
             evPartial   := true
             if showTradeLevels and fullChart
                 label.new(time, partialPx, "◑ " + str.tostring(partialPct, "#") + "% @" + f_px(partialPx) + "\n+" + f_money((partialPx - posEntry) * posDir * partLots * contractSize), xloc.bar_time, yloc.price, color.new(color.teal, 78), posDir == 1 ? label.style_label_down : label.style_label_up, color.new(color.teal, 0), size.tiny)
-    if exitNow and posDir != 0 and not na(exitPx)
+    if enableSignalEngine and exitNow and posDir != 0 and not na(exitPx)
         float grossExit = (exitPx - posEntry) * posDir * posLots * contractSize
         float commExit  = commissionPerLot * (posLots + posPartLots)
         float pnlExit   = posRealized + grossExit - commExit
@@ -1507,7 +1531,7 @@ if barstate.isconfirmed and bar_index >= 250
     int    sigSpike   = na
 
     // ── ENGINE 1 · classic AMD liquidity sweep + displacement + MSS ──
-    if pEng1
+    if enableSignalEngine and pEng1
         if bullSweepActive and bullBiasG and bullCQ and close > bullSweptLevel
             bool hasDisp = body1 >= pDispBody * atr1 or (body2 >= pDispBody * atr1p and close[1] > open[1])
             bool hasMss  = close >= swHigh4 - 0.20 * atr1 or bullFvg or close > high[1]
@@ -1524,7 +1548,7 @@ if barstate.isconfirmed and bar_index >= 250
                 sigEngine  := "AMD"
 
     // ── ENGINE 2 · Layer-3 internal swing sweep / Turtle-Soup rejection ──
-    if sigDir == 0 and pEng2
+    if enableSignalEngine and sigDir == 0 and pEng2
         if bullBiasG and close > ema50 and low < prevLow3 and close > prevLow3 and bullCQ
             if (lowerWick >= 0.30 * atr1 or body1 >= 0.30 * atr1) and (close > high[1] or bullFvg) and f_gfAllow(1, isPreNyWin, close, utStop, bbBasis, bbBasis1)
                 sigDir     := 1
@@ -1537,7 +1561,7 @@ if barstate.isconfirmed and bar_index >= 250
                 sigEngine  := "L3_SWEEP"
 
     // ── ENGINE 3 · NY Silver Bullet FVG continuation ──
-    if sigDir == 0 and pEng3
+    if enableSignalEngine and sigDir == 0 and pEng3
         if bullBiasG and close > ema20 and ema20 > ema50 and ema50 > ema50p4 and bullCQ and (bullFvg or close > high[1])
             if recentLow3 <= ema20 + 0.18 * atr1 and recentLow3 >= ema50 - 0.10 * atr1 and body1 >= pDispBody * atr1 and f_gfAllow(1, isPreNyWin, close, utStop, bbBasis, bbBasis1)
                 sigDir     := 1
@@ -1550,7 +1574,7 @@ if barstate.isconfirmed and bar_index >= 250
                 sigEngine  := "SILVER_B"
 
     // ── ENGINE 4 · GoldFusion SP2L (NY_PM only by default: 80% WR / +$756) ──
-    if sigDir == 0 and eng4On and (allDayMode or not sp2lNyPmOnly or activeWindow == "NY_PM")
+    if enableSignalEngine and sigDir == 0 and eng4On and (allDayMode or not sp2lNyPmOnly or activeWindow == "NY_PM")
         if sp2lDir != 0 and f_gfAllow(sp2lDir, true, close, utStop, bbBasis, bbBasis1)
             sigDir     := sp2lDir
             sigExtreme := sp2lExtreme
@@ -1558,7 +1582,7 @@ if barstate.isconfirmed and bar_index >= 250
             sigEngine  := "GF_SP2L"
 
     // ═══════════════ PHASE C6 · gate + order intent ════════════════════════
-    bool gateOk = inTrack and activeWindow != "" and posDir == 0 and pendDir == 0 and barsSinceEntry >= pCooldown
+    bool gateOk = enableSignalEngine and inTrack and activeWindow != "" and posDir == 0 and pendDir == 0 and barsSinceEntry >= pCooldown
     if sigDir != 0
         rawDirOut    := sigDir
         rawEngineOut := sigEngine
@@ -1592,16 +1616,22 @@ if barstate.isconfirmed and bar_index >= 250
         if showSignalMarks and fullChart
             label.new(time, sigDir > 0 ? low - atr1 * 0.55 : high + atr1 * 0.55, "⊘ " + sigEngine, xloc.bar_time, yloc.price, color.new(color.gray, 78), sigDir > 0 ? label.style_label_up : label.style_label_down, color.new(color.gray, 20), size.tiny)
 
-    // ── FVG artwork (only inside tradable hours, keeps the chart readable) ──
-    if showFVG and fullChart and inTrackBar
+    // ── FVG artwork: all day by default, with a bounded recent-zone history ──
+    if showFVG and (not fvgOnlyInTrack or inTrackBar)
         if bullFvg
             float gTop = low > high[2] ? low : low[1]
             float gBot = low > high[2] ? high[2] : high[3]
-            box.new(time[1], gTop, time[1] + fvgExtendBars * timeframe.in_seconds(timeframe.period) * 1000, gBot, color.new(#26A69A, 60), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#26A69A, 88))
+            box bullFvgBox = box.new(time[1], gTop, time[1] + fvgExtendBars * timeframe.in_seconds(timeframe.period) * 1000, gBot, color.new(#26A69A, 60), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#26A69A, 88))
+            array.push(fvgZoneBoxes, bullFvgBox)
+            if array.size(fvgZoneBoxes) > fvgZonesToKeep
+                box.delete(array.shift(fvgZoneBoxes))
         if bearFvg
             float gTop = high < low[2] ? low[2] : low[3]
             float gBot = high < low[2] ? high : high[1]
-            box.new(time[1], gTop, time[1] + fvgExtendBars * timeframe.in_seconds(timeframe.period) * 1000, gBot, color.new(#EF5350, 60), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#EF5350, 88))
+            box bearFvgBox = box.new(time[1], gTop, time[1] + fvgExtendBars * timeframe.in_seconds(timeframe.period) * 1000, gBot, color.new(#EF5350, 60), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#EF5350, 88))
+            array.push(fvgZoneBoxes, bearFvgBox)
+            if array.size(fvgZoneBoxes) > fvgZonesToKeep
+                box.delete(array.shift(fvgZoneBoxes))
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  APPROXIMATED FOOTPRINT  (redrawn only on the last bar → cheap & stable)
@@ -1723,24 +1753,24 @@ if showFootprint and fullChart and barstate.islast and bar_index > fpBars + 3
 floatPnl := posDir != 0 and not na(posEntry) ? (close - posEntry) * posDir * posLots * contractSize + posRealized : 0.0
 float equityNow = balance + floatPnl
 
-plot(fullChart and showLiquidity and asianHigh > 0 ? asianHigh : na,       "Asian High",     color.new(#FFD700, 25),   1, plot.style_linebr)
-plot(fullChart and showLiquidity and asianLow > 0 and asianLow < 1e8 ? asianLow : na, "Asian Low", color.new(#FFD700, 25), 1, plot.style_linebr)
-plot(fullChart and showLiquidity and londonHigh > 0 ? londonHigh : na,     "London High",    color.new(color.silver, 20), 1, plot.style_linebr)
-plot(fullChart and showLiquidity and londonLow > 0 and londonLow < 1e8 ? londonLow : na, "London Low", color.new(color.silver, 20), 1, plot.style_linebr)
-plot(fullChart and showLiquidity and pdh > 0 ? pdh : na,                   "Prev Day High",  color.new(#FF9800, 15),      1, plot.style_linebr)
-plot(fullChart and showLiquidity and pdl > 0 ? pdl : na,                   "Prev Day Low",   color.new(#FF9800, 15),      1, plot.style_linebr)
-plot(fullChart and showLiquidity and midnightOpen > 0 ? midnightOpen : na, "Midnight Open",  color.new(color.aqua, 25),   1, plot.style_linebr)
-plot(fullChart and showEmaRibbon ? ema20 : na,                             "EMA 20",         color.new(#29B6F6, 25),      1)
-plot(fullChart and showEmaRibbon ? ema50 : na,                             "EMA 50",         color.new(#FFB300, 15),      2)
-plot(fullChart and showEmaRibbon ? ema200 : na,                            "EMA 200",        color.new(#AB47BC, 5),       2)
-plot(fullChart and showBB50 ? bbBasis : na,                                "BB50 Basis",     color.new(#78909C, 25),      1, plot.style_cross)
-plot(fullChart and showUtBot ? utStop : na,                                "UT-Bot Trail",   close > utStop ? color.new(#00E676, 0) : color.new(#FF5252, 0), 2)
+plot(showLiquidity and asianHigh > 0 ? asianHigh : na,       "Asian High",     color.new(#FFD700, 25),   1, plot.style_linebr)
+plot(showLiquidity and asianLow > 0 and asianLow < 1e8 ? asianLow : na, "Asian Low", color.new(#FFD700, 25), 1, plot.style_linebr)
+plot(showLiquidity and londonHigh > 0 ? londonHigh : na,     "London High",    color.new(color.silver, 20), 1, plot.style_linebr)
+plot(showLiquidity and londonLow > 0 and londonLow < 1e8 ? londonLow : na, "London Low", color.new(color.silver, 20), 1, plot.style_linebr)
+plot(showLiquidity and pdh > 0 ? pdh : na,                   "Prev Day High",  color.new(#FF9800, 15),      1, plot.style_linebr)
+plot(showLiquidity and pdl > 0 ? pdl : na,                   "Prev Day Low",   color.new(#FF9800, 15),      1, plot.style_linebr)
+plot(showLiquidity and midnightOpen > 0 ? midnightOpen : na, "Midnight Open",  color.new(color.aqua, 25),   1, plot.style_linebr)
+plot(showEmaRibbon ? ema20 : na,                             "EMA 20",         color.new(#29B6F6, 25),      1)
+plot(showEmaRibbon ? ema50 : na,                             "EMA 50",         color.new(#FFB300, 15),      2)
+plot(showEmaRibbon ? ema200 : na,                            "EMA 200",        color.new(#AB47BC, 5),       2)
+plot(showBB50 ? bbBasis : na,                                "BB50 Basis",     color.new(#78909C, 25),      1, plot.style_cross)
+plot(showUtBot ? utStop : na,                                "UT-Bot Trail",   close > utStop ? color.new(#00E676, 0) : color.new(#FF5252, 0), 2)
 
 color kzBg = inNyAmBar ? color.new(#FF9800, 92) : inNyPmBar ? color.new(#7E57C2, 90) : inPreNyBar ? color.new(#29B6F6, 92) : inLonBar ? color.new(#66BB6A, 93) : na
-bgcolor(fullChart and showKillzones ? kzBg : na, title = "Killzone Windows")
-bgcolor(fullChart and showKillzones and whipBarNow ? color.new(#F44336, 84) : na, title = "NYSE Whip Bar (skipped)")
-bgcolor(fullChart and showKillzones and lateBuyBar ? color.new(#795548, 88) : na, title = "Late-Buy Block Bar")
-bgcolor(fullChart and showKillzones and not inTrackBar ? color.new(#263238, 94) : na, title = "Outside Sweep Tracking")
+bgcolor(showKillzones ? kzBg : na, title = "Killzone Windows")
+bgcolor(showKillzones and whipBarNow ? color.new(#F44336, 84) : na, title = "NYSE Whip Bar (skipped)")
+bgcolor(showKillzones and lateBuyBar ? color.new(#795548, 88) : na, title = "Late-Buy Block Bar")
+bgcolor(showKillzones and not inTrackBar ? color.new(#263238, 94) : na, title = "Outside Sweep Tracking")
 
 plotshape(showSignalMarks and fullChart and rawDirOut != 0 and sigDirOut == 0, "Blocked Setup", shape.xcross, location.abovebar, color.new(color.gray, 45), size = size.tiny, text = "")
 
@@ -1780,12 +1810,12 @@ string sweepTxt  = (bullSweepActive ? "SSL swept " + f_px(bullSweptLevel) + " ("
 string biasTxt   = bullBiasOut and not bearBiasOut ? "BULL" : bearBiasOut and not bullBiasOut ? "BEAR" : bullBiasOut and bearBiasOut ? "CONFLICT" : "FLAT / FILTERED"
 
 string compactCurrent = posDir != 0 ? posTxt + " · " + f_money(floatPnl) : pendDir != 0 ? pendTxt : "FLAT"
-if cleanChart and showTable and barstate.islast
+if enableSignalEngine and cleanChart and showTable and barstate.islast
     if na(compactTbl)
         compactTbl := table.new(statsPos, 2, 11, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
         table.merge_cells(compactTbl, 0, 0, 1, 0)
         table.merge_cells(compactTbl, 0, 10, 1, 10)
-    f_hdr(compactTbl, 0, "AMD FUSION · CLEAN RESULTS", 2)
+    f_hdr(compactTbl, 0, "AMD FUSION · SIMULATED RESULTS", 2)
     f_k(compactTbl, 0, 1, "Closed trades")
     f_v(compactTbl, 1, 1, str.tostring(trades), tblFg)
     f_k(compactTbl, 0, 2, "Win rate")
@@ -1806,7 +1836,7 @@ if cleanChart and showTable and barstate.islast
     f_v(compactTbl, 1, 9, str.tostring(array.size(recentSignalLabels)) + " / " + str.tostring(recentSignalCount), tblFg)
     f_hdr(compactTbl, 10, allDayMode ? "24H MODE · ALL WINDOWS" : "SESSION WINDOWS · BROKER TIME", 2)
 
-if fullChart and showTable and barstate.islast
+if enableSignalEngine and fullChart and showTable and barstate.islast
     if na(statsTbl)
         statsTbl := table.new(statsPos, 4, 30, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
     f_hdr(statsTbl, 0, "AMD + GOLDFUSION v3.40 · SIMULATION LEDGER", 4)
@@ -1910,7 +1940,7 @@ if fullChart and showTable and barstate.islast
     f_wide(statsTbl, 1, 28, lastEvent, color.new(#FFD740, 0), 3)
     f_hdr(statsTbl, 29, "NON-REPAINT · closed-bar evaluation · " + timeframe.period + " · " + str.tostring(trades) + " simulated trades", 4)
 
-if fullChart and showBreakdown and barstate.islast
+if enableSignalEngine and fullChart and showBreakdown and barstate.islast
     if na(brkTbl)
         brkTbl := table.new(brkPos, 4, 14, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
     array<string> eNames = array.from("Engine 1 · AMD Sweep", "Engine 2 · L3 Turtle", "Engine 3 · Silver Bullet", "Engine 4 · GF SP2L", "Other")
@@ -1945,7 +1975,7 @@ if fullChart and showBreakdown and barstate.islast
 if fullChart and showDashboard and barstate.islast
     if na(dashTbl)
         dashTbl := table.new(dashPos2, 2, 20, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
-    f_hdr(dashTbl, 0, "LIVE DECISION ENGINE  (bar closed: " + str.format_time(time, "yy/MM/dd HH:mm", syminfo.timezone) + ")", 2)
+    f_hdr(dashTbl, 0, (enableSignalEngine ? "LIVE DECISION ENGINE" : "TECHNICAL ANALYSIS · SIGNAL ENGINE OFF") + "  (bar closed: " + str.format_time(time, "yy/MM/dd HH:mm", syminfo.timezone) + ")", 2)
     f_k(dashTbl, 0, 1, "Broker / New-York clock")
     f_v(dashTbl, 1, 1, f_brokerClock(time) + "  /  " + f_nyClock(time), tblFg)
     f_k(dashTbl, 0, 2, "Killzone (next bar open)")
@@ -1961,11 +1991,11 @@ if fullChart and showDashboard and barstate.islast
     f_k(dashTbl, 0, 7, "GF filter scope")
     f_v(dashTbl, 1, 7, gfScopeStr, tblFg)
     f_k(dashTbl, 0, 8, "Reversal-shield vote")
-    f_v(dashTbl, 1, 8, pbVoteOut == 0 ? "no pullback vote" : (pbVoteOut > 0 ? "BULL quorum building" : "BEAR quorum building") + (shieldFired ? "  ⚡ FIRED" : ""), pbVoteOut == 0 ? color.new(color.white, 45) : color.new(#FFA726, 0))
+    f_v(dashTbl, 1, 8, not enableSignalEngine ? "disabled · visual analysis only" : pbVoteOut == 0 ? "no pullback vote" : (pbVoteOut > 0 ? "BULL quorum building" : "BEAR quorum building") + (shieldFired ? "  ⚡ FIRED" : ""), not enableSignalEngine or pbVoteOut == 0 ? color.new(color.white, 45) : color.new(#FFA726, 0))
     f_k(dashTbl, 0, 9, "Engines armed")
-    f_v(dashTbl, 1, 9, (pEng1 ? "E1✓ " : "E1✗ ") + (pEng2 ? "E2✓ " : "E2✗ ") + (pEng3 ? "E3✓ " : "E3✗ ") + (eng4On ? "E4✓" : "E4✗") + (eng4On and allDayMode ? " (24H)" : eng4On and sp2lNyPmOnly ? " (NY_PM)" : ""), tblFg)
+    f_v(dashTbl, 1, 9, enableSignalEngine ? (pEng1 ? "E1✓ " : "E1✗ ") + (pEng2 ? "E2✓ " : "E2✗ ") + (pEng3 ? "E3✓ " : "E3✗ ") + (eng4On ? "E4✓" : "E4✗") + (eng4On and allDayMode ? " (24H)" : eng4On and sp2lNyPmOnly ? " (NY_PM)" : "") : "OFF · strategy logic skipped", enableSignalEngine ? tblFg : color.new(color.white, 45))
     f_k(dashTbl, 0, 10, "Raw setup this bar")
-    f_v(dashTbl, 1, 10, rawDirOut == 0 ? "none" : rawEngineOut + (rawDirOut > 0 ? " BUY" : " SELL") + (rawWhyOut == "" ? " → ORDER SENT" : " → blocked: " + rawWhyOut), rawDirOut == 0 ? color.new(color.white, 45) : rawWhyOut == "" ? color.new(#00E5FF, 0) : color.new(#FF7043, 0))
+    f_v(dashTbl, 1, 10, not enableSignalEngine ? "disabled by setting" : rawDirOut == 0 ? "none" : rawEngineOut + (rawDirOut > 0 ? " BUY" : " SELL") + (rawWhyOut == "" ? " → ORDER SENT" : " → blocked: " + rawWhyOut), not enableSignalEngine or rawDirOut == 0 ? color.new(color.white, 45) : rawWhyOut == "" ? color.new(#00E5FF, 0) : color.new(#FF7043, 0))
     f_k(dashTbl, 0, 11, "Open position")
     f_v(dashTbl, 1, 11, posTxt, posDir == 0 ? color.new(color.white, 45) : color.new(#29B6F6, 0))
     f_k(dashTbl, 0, 12, "Entry / Stop / Target")

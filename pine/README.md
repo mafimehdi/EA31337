@@ -1,13 +1,14 @@
 # XAUUSD AMD + GoldFusion v3.40 — TradingView Pine Port
 
-A **zero-repaint Pine Script™ v6 indicator** that ports the MQL4 expert advisor
-`XAUUSD_AMD_Fusion_v340.mq4` (HYBRID_04 spine + GoldFusion v6.3 modules) to TradingView,
-draws every internal decision the MT4 chart never showed, and keeps a full statistical
-ledger of the simulated trades.
+A **zero-repaint Pine Script™ v6 indicator** for XAUUSD M15 that ports the MQL4 expert advisor
+`XAUUSD_AMD_Fusion_v340.mq4` (HYBRID_04 spine + GoldFusion v6.3 modules) to TradingView.
+It opens in **technical-analysis mode**: indicators and zones are on, while strategy
+signals and trade simulation are off to keep chart use visual-first and lighter. The
+signal engine, trade outcomes and statistics are available as an opt-in setting.
 
 * File: [`XAUUSD_AMD_Fusion_v340.pine`](XAUUSD_AMD_Fusion_v340.pine)
-* Type: `indicator()` (overlay) — **not** a `strategy()`, so it can be added to any chart
-  and its simulation runs inside the script itself.
+* Type: `indicator()` (overlay) — **not** a `strategy()`. Its optional trade simulation
+  runs inside the indicator when enabled; it does not send broker orders.
 * Language: Pine Script™ v6.
 
 ---
@@ -24,15 +25,17 @@ ledger of the simulated trades.
    brokers use, `3` for GMT+3 fixed feeds, `0` for a UTC feed).
    All killzones (16:00–18:15 NY_AM, 20:00–20:45 NY_PM, …) are expressed in **broker
    time**, exactly like the MQL source, so this offset is the single most important input.
-5. The default **Clean (signals + results)** layout keeps the chart readable: it shows
-   the last 30 accepted signals (each label updates to `OPEN`, `TP HIT`, `SL HIT`,
-   `LOCKED SL HIT`, or another exit status), the active Entry/SL/TP ladder, and a compact
-   stats panel with closed-trade count, win rate, TP/SL/locked-SL exits, and net dollar P&L.
-   Set `Recent signal results to keep` to 30–100. Choose **Full analysis** for the extra
-   liquidity/FVG/EMA overlays and the full ledger, breakdown, and decision dashboard.
-6. In `2 · Micro-Killzone Windows`, enable **24-hour trading (ignore time windows)** to
-   bypass session windows/caps and the time-of-day blocks; leave it off to use the
-   broker-time windows below it.
+5. The default **Technical analysis** layout shows the main chart layers: liquidity levels,
+   sweep zones (latest 100), FVGs (latest 100 by default), killzone shading, EMA 20/50/200,
+   UT-Bot and BB50. FVGs can be restricted to sweep-tracking hours in settings.
+6. To add strategy-generated entries/exits and simulated P&L, enable **Enable strategy
+   signals + trade simulation** in `5 · Chart Visualisation`. It is OFF by default; when
+   enabled, the last 30 accepted labels are retained (configurable to 100), with explicit
+   TP/SL/locked-SL and other outcomes. Statistics tables are then available as well.
+7. Choose **Full analysis** to add the decision dashboard, trade-stage artwork and optional
+   footprint. With the signal engine ON, it also shows the large ledger and performance
+   breakdown. In `2 · Micro-Killzone Windows`, enable **24-hour trading (ignore time windows)**
+   when the strategy engine is enabled to bypass session windows/caps and the time-of-day blocks.
 
 ### راهنمای سریع (فارسی)
 
@@ -40,32 +43,41 @@ ledger of the simulated trades.
   کپی/Save و سپس Add to chart کنید.
 * در تنظیمات، **Broker Winter GMT Offset** را مطابق بروکر خود (معمولاً `2`) وارد کنید؛
   تمام پنجره‌های زمانی (کیل‌زون‌ها) بر اساس **زمان بروکر** محاسبه می‌شوند.
-* حالت پیش‌فرض **Clean** چارت را خلوت می‌کند: فقط ۳۰ سیگنال پذیرفته‌شدهٔ آخر (با نتیجهٔ
-  TP/SL/قفل یا وضعیت خروج)، نردبان معاملهٔ باز، و جدول خلاصه دیده می‌شود. تعداد را از
-  `Recent signal results to keep` بین ۳۰ تا ۱۰۰ انتخاب کنید. جدول خلاصه، تعداد معاملات بسته‌شده،
-  وین‌ریت، برخورد TP/SL و SL قفل‌شده، و سود/زیان خالص دلاری را نشان می‌دهد. برای همهٔ لایه‌ها و
-  جدول‌های کامل، `Chart Layout` را روی **Full analysis** بگذارید.
-* برای معامله در تمام ساعات، گزینهٔ **24-hour trading (ignore time windows)** را روشن
-  کنید؛ خاموش بودن آن، پنجره‌ها و محدودیت‌های زمانی فعلی را نگه می‌دارد.
+* حالت پیش‌فرض **Technical analysis** است: سطوح نقدینگی، Sweep، FVG، Killzone، EMAهای
+  ۲۰/۵۰/۲۰۰، UT-Bot و BB50 را نشان می‌دهد؛ بخش سیگنال‌دهی و شبیه‌سازی معامله خاموش است.
+  نواحی Sweep تا ۱۰۰ مورد و FVG به‌صورت پیش‌فرض در همهٔ ساعات (تا ۱۰۰ مورد آخر) ترسیم می‌شوند.
+* اگر لیبل ورود/خروج و آمار TP/SL و P&L را هم می‌خواهید، گزینهٔ **Enable strategy signals +
+  trade simulation** را در تنظیمات روشن کنید. این بخش پیش‌فرض خاموش است؛ پس از روشن‌کردن،
+  ۳۰ تا ۱۰۰ سیگنال پذیرفته‌شدهٔ آخر با نتیجهٔ مشخص روی نمودار می‌مانند.
+* `Full analysis` داشبورد تصمیم، جزئیات معامله و فوت‌پرینت اختیاری را اضافه می‌کند؛ جدول‌های
+  بزرگ آمار هم وقتی موتور سیگنال روشن باشد نمایش داده می‌شوند. برای اجرای موتور در تمام ساعات،
+  گزینهٔ **24-hour trading (ignore time windows)** را روشن کنید؛
+  خاموش بودن آن، پنجره‌ها و محدودیت‌های زمانی فعلی را نگه می‌دارد.
 * برای دیدن فوت‌پرینت تقریبی، ابتدا `Chart Layout` را روی **Full analysis** بگذارید و سپس گزینهٔ **Show Footprint Columns** را روشن کنید.
 * اسکریپت **ریپینت ندارد**: همه‌چیز فقط روی کندل بسته‌شده محاسبه و با
   `barstate.isconfirmed` قفل می‌شود.
 
 ---
 
-## 2. Clean chart, retained signal outcomes, and 24H mode
+## 2. Chart-first mode, optional signals, and 24H mode
 
-* `Chart Layout = Clean (signals + results)` is the default. It hides secondary layers and
-  the three large panels, replacing them with one compact summary and the active trade
-  ladder. `Full analysis` restores the optional overlays and full tables.
-* Every accepted setup gets one persistent label. It starts as `SIGNAL`, then updates as
-  its order waits/fills, and finally reports an explicit result such as `TP HIT`, `SL HIT`,
-  `LOCKED SL HIT`, `SHIELD EXIT`, `SESSION CLOSE`, or `NO FILL · EXPIRED`, plus R and dollar
-  P&L. The oldest label is deleted only when the rolling 30–100 label limit is exceeded.
-* `24-hour trading (ignore time windows)` bypasses session windows and per-window caps,
-  the NY_PM-only Engine-4 time gate, NY whip/late-buy time blocks, and NY end-of-session
-  auto-closing. The all-day trades are grouped as `24H mode` in the window breakdown.
-  Cooldown, one-position-at-a-time, strategy filters, and risk checks remain active.
+* `Chart Layout = Technical analysis` is the default. It shows the technical layers without
+  the large statistics panels. Liquidity, sweep, FVG, killzone, EMA, UT-Bot and BB50 layers
+  each have a visibility input; the latest 100 FVG zones are retained by default.
+* `Enable strategy signals + trade simulation` is OFF by default, so entry detection and
+  simulated trade management/ledger are skipped. The lightweight sweep tracking needed to
+  draw zones stays active. Turn the option on to get persistent setup labels, active Entry/SL/TP
+  levels, closed outcomes (`TP HIT`, `SL HIT`, `LOCKED SL HIT`,
+  `SHIELD EXIT`, `SESSION CLOSE`, or no-fill statuses), plus simulated R and dollar P&L.
+  Retain 30–100 accepted signal labels. The statistics and performance tables are available
+  when this engine is enabled; they represent simulation, not broker orders.
+* `Full analysis` adds the decision dashboard, trade-stage artwork and optional footprint.
+  The large ledger and performance breakdown appear only when the signal engine is enabled;
+  the dashboard states clearly when it is disabled.
+* `24-hour trading (ignore time windows)` makes sweep tracking all-day and, when the
+  strategy engine is enabled, bypasses session windows/caps, the NY_PM-only Engine-4 gate,
+  NY whip/late-buy time blocks and NY end-of-session auto-closing. Cooldown, one-position,
+  strategy filters and risk checks remain active when signals are enabled.
 
 ---
 
@@ -130,6 +142,9 @@ assumption you control with **`Intra-Bar Fill Assumption`**:
 ---
 
 ## 5. Statistics tables
+
+These tables require **Enable strategy signals + trade simulation** to be ON; with it OFF,
+the script stays in chart-only technical-analysis mode and skips simulated trades.
 
 **SIMULATION LEDGER** — trades, win rate, wins, losses, TP hits, SL hits, Step-Lock exits,
 shield exits, session-end exits, expired limits, partials taken, average R, net profit,
@@ -197,7 +212,7 @@ which stop/target/stage) is identical.
 | `2 · Micro-Killzone Windows` | 24H override, entry mode, pullback ratio, pending expiry, whip/late-buy skips, per-window caps, London session, cooldowns, session-end close, and every window boundary in broker hours |
 | `3 · M15 Core Engines` | strict EMA slope, min/max sweep ATR, MSS bars, displacement body, engine 1/2/3 switches |
 | `4 · GoldFusion v6.3 Modules` | Engine 4 SP2L parameters, NY_PM-only switch, PRE_NY window + cap, UT-Bot, BB50, filter scope, reversal shield |
-| `5 · Chart Visualisation` | clean/full layout, 30–100 retained signal outcomes, overlays, active trade ladder, result boxes, marker/text size |
+| `5 · Chart Visualisation` | technical/full layout, optional signal engine, 30–100 retained signal outcomes, indicator/zone visibility, FVG time scope/history, active trade ladder and result artwork |
 | `6 · Approximated Footprint` | enable, bars back, rows, imbalance ratio, delta tilt, min volume, cell text |
 | `7 · Statistics Tables & Live Dashboard` | table/dashboard switches, positions, text size, colours |
 
@@ -206,8 +221,9 @@ which stop/target/stage) is identical.
 ## 9. Alerts
 
 `alertcondition()` entries are provided for: setup detected, order filled, Step-1 partial,
-position closed, reversal-shield exit, and UT-Bot flips (long/short). Create the alert in
-TradingView with **"Once per bar close"** so it stays in sync with the non-repaint logic.
+position closed, reversal-shield exit, and UT-Bot flips (long/short). Strategy alerts require
+**Enable strategy signals + trade simulation** to be ON; UT-Bot flip alerts remain independent.
+Create the alert with **"Once per bar close"** so it stays in sync with the non-repaint logic.
 
 ---
 
