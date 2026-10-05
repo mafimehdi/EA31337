@@ -1372,7 +1372,8 @@ if barstate.isconfirmed and bar_index >= 250
             if zTop - zBot < atr1 * 0.35
                 zTop := zTop + atr1 * 0.175
                 zBot := zBot - atr1 * 0.175
-            box.new(posEntryTime, zTop, time, zBot, color.new(xc, 55), 1, line.style_solid, extend.none, xloc.bar_time, color.new(xc, 90))
+            int zRight = time > posEntryTime ? time : time + timeframe.in_seconds(timeframe.period) * 1000
+            box.new(posEntryTime, zTop, zRight, zBot, color.new(xc, 55), 1, line.style_solid, extend.none, xloc.bar_time, color.new(xc, 90))
         if showTradeLevels
             if not na(slLine)
                 line.set_x2(slLine, time)
