@@ -1130,7 +1130,7 @@ if barstate.isconfirmed and bar_index >= 250
                 slLine    := line.new(posEntryTime, posSL, time, posSL, xloc.bar_time, extend.right, color.new(color.red, 10), line.style_dashed, 1)
                 tpLine    := line.new(posEntryTime, posTP, time, posTP, xloc.bar_time, extend.right, color.new(color.green, 10), line.style_dashed, 1)
                 string etxt = (posDir == 1 ? "▲ " : "▼ ") + posEngine + " · " + posWindow + "\n" + (posDir == 1 ? "BUY " : "SELL ") + f_lots(posInitLots) + " @ " + f_px(posEntry) + "\nSL " + f_px(posSL) + "  (-1.00R)\nTP " + f_px(posTP) + "  (+" + str.tostring(pRrTarget, "#.##") + "R)"
-                label.new(posEntryTime, posEntry, etxt, xloc.bar_time, posDir == 1 ? yloc.belowprice : yloc.aboveprice, color.new(ec, 80), posDir == 1 ? label.style_label_up : label.style_label_down, ec, lblSz)
+                label.new(posEntryTime, posEntry, etxt, xloc.bar_time, yloc.price, color.new(ec, 80), posDir == 1 ? label.style_label_up : label.style_label_down, ec, lblSz)
             if not na(slLine)
                 line.set_xy1(slLine, posEntryTime, posSL)
                 line.set_xy2(slLine, time, posSL)
@@ -1233,7 +1233,7 @@ if barstate.isconfirmed and bar_index >= 250
             if na(bullSweepBx)
                 bullSweepBx := box.new(nz(bullSweepTime, time), topB, time, botB, color.new(#26A69A, 45), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#26A69A, 86))
                 bullSweepLn := line.new(nz(bullSweepTime, time), bullSweptLevel, time, bullSweptLevel, xloc.bar_time, extend.right, color.new(#26A69A, 25), line.style_dashed, 1)
-                label.new(nz(bullSweepTime, time), botB, "SSL SWEPT\n" + f_px(bullSweptLevel), xloc.bar_time, yloc.belowprice, color.new(#26A69A, 75), label.style_label_up, color.white, size.tiny)
+                label.new(nz(bullSweepTime, time), botB, "SSL SWEPT\n" + f_px(bullSweptLevel), xloc.bar_time, yloc.price, color.new(#26A69A, 75), label.style_label_up, color.white, size.tiny)
             else
                 box.set_right(bullSweepBx, time)
                 box.set_bottom(bullSweepBx, botB)
@@ -1250,7 +1250,7 @@ if barstate.isconfirmed and bar_index >= 250
             if na(bearSweepBx)
                 bearSweepBx := box.new(nz(bearSweepTime, time), topR, time, botR, color.new(#FF5252, 45), 1, line.style_dotted, extend.none, xloc.bar_time, color.new(#FF5252, 86))
                 bearSweepLn := line.new(nz(bearSweepTime, time), bearSweptLevel, time, bearSweptLevel, xloc.bar_time, extend.right, color.new(#FF5252, 25), line.style_dashed, 1)
-                label.new(nz(bearSweepTime, time), topR, "BSL SWEPT\n" + f_px(bearSweptLevel), xloc.bar_time, yloc.aboveprice, color.new(#FF5252, 75), label.style_label_down, color.white, size.tiny)
+                label.new(nz(bearSweepTime, time), topR, "BSL SWEPT\n" + f_px(bearSweptLevel), xloc.bar_time, yloc.price, color.new(#FF5252, 75), label.style_label_down, color.white, size.tiny)
             else
                 box.set_right(bearSweepBx, time)
                 box.set_top(bearSweepBx, topR)
@@ -1306,7 +1306,7 @@ if barstate.isconfirmed and bar_index >= 250
             partialCount := partialCount + 1
             evPartial   := true
             if showTradeLevels
-                label.new(time, partialPx, "◑ " + str.tostring(partialPct, "#") + "% @" + f_px(partialPx) + "\n+" + f_money((partialPx - posEntry) * posDir * partLots * contractSize), xloc.bar_time, posDir == 1 ? yloc.aboveprice : yloc.belowprice, color.new(color.teal, 78), posDir == 1 ? label.style_label_down : label.style_label_up, color.new(color.teal, 0), size.tiny)
+                label.new(time, partialPx, "◑ " + str.tostring(partialPct, "#") + "% @" + f_px(partialPx) + "\n+" + f_money((partialPx - posEntry) * posDir * partLots * contractSize), xloc.bar_time, yloc.price, color.new(color.teal, 78), posDir == 1 ? label.style_label_down : label.style_label_up, color.new(color.teal, 0), size.tiny)
     if exitNow and posDir != 0 and not na(exitPx)
         float grossExit = (exitPx - posEntry) * posDir * posLots * contractSize
         float commExit  = commissionPerLot * (posLots + posPartLots)
@@ -1371,7 +1371,7 @@ if barstate.isconfirmed and bar_index >= 250
         color xc = pnlExit > 0 ? color.new(#00E676, 0) : color.new(#FF1744, 0)
         string xtxt = exitWhy + "  " + f_r(rMult) + "\n" + f_money(pnlExit) + (posPartDone ? "\n(+" + str.tostring(partialPct, "#") + "% partial)" : "")
         if showTradeLevels or showTradeZones
-            label.new(time, exitPx, xtxt, xloc.bar_time, posDir == 1 ? yloc.aboveprice : yloc.belowprice, color.new(xc, 72), posDir == 1 ? label.style_label_down : label.style_label_up, xc, lblSz)
+            label.new(time, exitPx, xtxt, xloc.bar_time, yloc.price, color.new(xc, 72), posDir == 1 ? label.style_label_down : label.style_label_up, xc, lblSz)
         if showTradeZones and not na(posEntryTime)
             float zTop = math.max(posEntry, exitPx)
             float zBot = math.min(posEntry, exitPx)
@@ -1506,11 +1506,11 @@ if barstate.isconfirmed and bar_index >= 250
         lastEvent     := "SIGNAL " + sigEngine + " " + activeWindow + (sigDir > 0 ? " BUY" : " SELL")
         if showSignalMarks
             color sc = sigDir > 0 ? color.new(#00E5FF, 0) : color.new(#FFD740, 0)
-            label.new(time, sigDir > 0 ? low - atr1 * 0.9 : high + atr1 * 0.9, (sigDir > 0 ? "▲ " : "▼ ") + sigEngine + "\n" + activeWindow, xloc.bar_time, sigDir > 0 ? yloc.belowprice : yloc.aboveprice, color.new(sc, 70), sigDir > 0 ? label.style_label_up : label.style_label_down, sc, lblSz)
+            label.new(time, sigDir > 0 ? low - atr1 * 0.9 : high + atr1 * 0.9, (sigDir > 0 ? "▲ " : "▼ ") + sigEngine + "\n" + activeWindow, xloc.bar_time, yloc.price, color.new(sc, 70), sigDir > 0 ? label.style_label_up : label.style_label_down, sc, lblSz)
     else if sigDir != 0
         rawWhyOut := not inTrack ? "outside sweep-tracking hours" : activeWindow == "" ? "no killzone window / cap reached" : posDir != 0 ? "position already open" : pendDir != 0 ? "pending order active" : barsSinceEntry < pCooldown ? "cooldown" : "risk out of bounds"
         if showSignalMarks
-            label.new(time, sigDir > 0 ? low - atr1 * 0.55 : high + atr1 * 0.55, "⊘ " + sigEngine, xloc.bar_time, sigDir > 0 ? yloc.belowprice : yloc.aboveprice, color.new(color.gray, 78), sigDir > 0 ? label.style_label_up : label.style_label_down, color.new(color.gray, 20), size.tiny)
+            label.new(time, sigDir > 0 ? low - atr1 * 0.55 : high + atr1 * 0.55, "⊘ " + sigEngine, xloc.bar_time, yloc.price, color.new(color.gray, 78), sigDir > 0 ? label.style_label_up : label.style_label_down, color.new(color.gray, 20), size.tiny)
 
     // ── FVG artwork (only inside tradable hours, keeps the chart readable) ──
     if showFVG and inTrackBar
@@ -1643,8 +1643,8 @@ if showFootprint and barstate.islast and bar_index > fpBars + 3
 floatPnl := posDir != 0 and not na(posEntry) ? (close - posEntry) * posDir * posLots * contractSize + posRealized : 0.0
 float equityNow = balance + floatPnl
 
-plot(showLiquidity and asianHigh > 0 ? asianHigh : na,       "Asian High",     color.new(color.gold, 25),   1, plot.style_linebr)
-plot(showLiquidity and asianLow > 0 and asianLow < 1e8 ? asianLow : na, "Asian Low", color.new(color.gold, 25), 1, plot.style_linebr)
+plot(showLiquidity and asianHigh > 0 ? asianHigh : na,       "Asian High",     color.new(#FFD700, 25),   1, plot.style_linebr)
+plot(showLiquidity and asianLow > 0 and asianLow < 1e8 ? asianLow : na, "Asian Low", color.new(#FFD700, 25), 1, plot.style_linebr)
 plot(showLiquidity and londonHigh > 0 ? londonHigh : na,     "London High",    color.new(color.silver, 20), 1, plot.style_linebr)
 plot(showLiquidity and londonLow > 0 and londonLow < 1e8 ? londonLow : na, "London Low", color.new(color.silver, 20), 1, plot.style_linebr)
 plot(showLiquidity and pdh > 0 ? pdh : na,                   "Prev Day High",  color.new(#FF9800, 15),      1, plot.style_linebr)
@@ -1870,7 +1870,7 @@ if showDashboard and barstate.islast
     f_k(dashTbl, 0, 14, "Pending limit")
     f_v(dashTbl, 1, 14, pendTxt, pendDir == 0 ? color.new(color.white, 45) : color.new(#FFA726, 0))
     f_k(dashTbl, 0, 15, "Session liquidity")
-    f_wide(dashTbl, 1, 15, "Asian  " + (asianHigh > 0 ? f_px(asianHigh) + " / " + f_px(asianLow) : "—") + "\nLondon " + (londonHigh > 0 ? f_px(londonHigh) + " / " + f_px(londonLow) : "—") + "\nPDH " + (pdh > 0 ? f_px(pdh) : "—") + " / PDL " + (pdl > 0 ? f_px(pdl) : "—") + "\nMidnight " + (midnightOpen > 0 ? f_px(midnightOpen) : "—"), color.new(color.gold, 15), 1)
+    f_wide(dashTbl, 1, 15, "Asian  " + (asianHigh > 0 ? f_px(asianHigh) + " / " + f_px(asianLow) : "—") + "\nLondon " + (londonHigh > 0 ? f_px(londonHigh) + " / " + f_px(londonLow) : "—") + "\nPDH " + (pdh > 0 ? f_px(pdh) : "—") + " / PDL " + (pdl > 0 ? f_px(pdl) : "—") + "\nMidnight " + (midnightOpen > 0 ? f_px(midnightOpen) : "—"), color.new(#FFD700, 15), 1)
     f_k(dashTbl, 0, 16, "Trade caps AM/PM/PRE/LON")
     f_v(dashTbl, 1, 16, str.tostring(nyAmTradesC) + "/" + str.tostring(pMaxNyAm) + " · " + str.tostring(nyPmTradesC) + "/" + str.tostring(pMaxNyPm) + " · " + str.tostring(preNyTradesC) + "/" + str.tostring(maxTradesPreNy) + " · " + str.tostring(lonTradesC) + "/1", tblFg)
     f_k(dashTbl, 0, 17, "Footprint Δ last bar")
