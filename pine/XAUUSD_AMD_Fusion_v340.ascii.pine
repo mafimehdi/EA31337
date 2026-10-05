@@ -104,6 +104,8 @@ intrabarMode       = input.string("Pessimistic (SL first)", "Intra-Bar Fill Assu
 
 // ------------------------------- 2 - WINDOWS -------------------------------
 string G2 = "2 - Micro-Killzone Windows (Broker Time)"
+tradeAllDay        = input.bool (false, "24-hour trading (ignore time windows)", group = G2,
+     tooltip = "ON = allow signals all day, bypass session windows/caps, NY_PM-only, whip/late-buy time blocks, and NY end-of-session closing. OFF = use the configured broker-time windows below.")
 entryModeStr       = input.string("15% Shallow FVG Limit (1-bar expiry)", "Entry Mode",
      options = ["15% Shallow FVG Limit (1-bar expiry)", "Market on Confirmation Close"], group = G2)
 fvgPullback        = input.float(0.15, "Shallow FVG Pullback Ratio", minval = 0.0, maxval = 0.9, step = 0.01, group = G2)
@@ -162,6 +164,11 @@ useShield          = input.bool (true, "Pre-Step1 Confirmed-Reversal Quorum Shie
 
 // ------------------------------- 5 - VISUALS -------------------------------
 string G5 = "5 - Chart Visualisation (the parts MT4 never drew)"
+chartLayout        = input.string("Clean (signals + results)", "Chart Layout",
+     options = ["Clean (signals + results)", "Full analysis"], group = G5,
+     tooltip = "Clean keeps recent signal/result labels, the active trade ladder and compact stats. Full analysis enables the extra overlays and tables.")
+recentSignalCount  = input.int(30, "Recent signal results to keep", minval = 30, maxval = 100, group = G5,
+     tooltip = "Keep the newest 30 to 100 accepted signals on-chart. Each label updates to OPEN, TP HIT, SL HIT, or its final exit status.")
 showKillzones      = input.bool (true, "Killzone Session Backgrounds", group = G5)
 showLiquidity      = input.bool (true, "Liquidity Levels (Asian/London/PDH/PDL/Midnight)", group = G5)
 showSweepZones     = input.bool (true, "Sweep + Manipulation Zones", group = G5)
@@ -174,7 +181,7 @@ showPending        = input.bool (true, "Pending Limit Orders (ladder + expiry)",
 showTradeLevels    = input.bool (true, "Entry / SL / TP Ladder of Active Trade", group = G5)
 showStepLocks      = input.bool (true, "Step-Lock Stage Levels (S1/S2/S3)", group = G5)
 showTradeZones     = input.bool (true, "Closed-Trade Result Boxes + R Labels", group = G5)
-showSignalMarks    = input.bool (true, "Engine Signal Markers", group = G5)
+showSignalMarks    = input.bool (true, "Persistent signal + outcome labels", group = G5)
 lblSize            = input.string("small", "Label / Text Size", options = ["tiny", "small", "normal"], group = G5)
 
 // ------------------------------ 6 - FOOTPRINT ------------------------------
@@ -224,8 +231,12 @@ bool  pSbSell     = pPreset ? false : allowSbSell
 int   pCooldown   = cooldownBars
 int   pMaxNyAm    = maxNyAm
 int   pMaxNyPm    = maxNyPm
-bool  pSkipWhip   = skipWhip
-bool  pSkipLate   = skipLateBuys
+bool  allDayMode  = tradeAllDay
+bool  fullChart   = chartLayout == "Full analysis"
+bool  cleanChart  = not fullChart
+bool  pSkipWhip   = skipWhip and not allDayMode
+bool  pSkipLate   = skipLateBuys and not allDayMode
+bool  drawPending = showPending and fullChart
 float pPullback   = fvgPullback
 int   pExpiry     = pendingExpiryBars
 bool  pMarketEntry = entryModeStr == "Market on Confirmation Close"
@@ -379,7 +390,11 @@ var array<label> fpLabels = array.new<label>()
 var table statsTbl     = na
 var table brkTbl       = na
 var table dashTbl      = na
+var table compactTbl   = na
 var table warnTbl      = na
+var array<label> recentSignalLabels = array.new<label>()
+var label activeSignalLabel = na
+var string lastOutcomeText = "No completed trade"
 
 // Per-bar outputs consumed by the plot/alert layer
 float sigDirOut      = 0
@@ -450,6 +465,9 @@ f_px(float x) =>
 
 f_lots(float x) =>
     str.tostring(x, "#.##") + " lots"
+
+f_exitTag(string why) =>
+    why == "TP" ? "TP HIT" : why == "SL" ? "SL HIT" : why == "LOCK" ? "LOCKED SL HIT" : why == "SHIELD" ? "SHIELD EXIT" : why == "SESSION_END" ? "SESSION CLOSE" : why
 
 // -- Lot sizing (CalculatePositionLots) --
 f_normLots(float x) =>
@@ -708,7 +726,7 @@ inNyAmBar   = brkSelf >= nyAmStart and brkSelf <= nyAmEnd
 inNyPmBar   = brkSelf >= nyPmStart and brkSelf <= nyPmEnd
 inPreNyBar  = enablePreNy and brkSelf >= preNyStart and brkSelf <= preNyEnd
 inLonBar    = pLondon and brkSelf >= lonStart and brkSelf <= lonEnd
-inTrackBar  = (pLondon and brkSelf >= lonStart - 0.5 and brkSelf <= lonEnd) or (enablePreNy and brkSelf >= preNyStart - 0.5 and brkSelf <= trackEnd) or (brkSelf >= trackStart and brkSelf <= trackEnd)
+inTrackBar  = allDayMode or (pLondon and brkSelf >= lonStart - 0.5 and brkSelf <= lonEnd) or (enablePreNy and brkSelf >= preNyStart - 0.5 and brkSelf <= trackEnd) or (brkSelf >= trackStart and brkSelf <= trackEnd)
 whipBarNow  = pSkipWhip and ((math.floor(brkSelf) == 16 and math.round((brkSelf - math.floor(brkSelf)) * 60) == 45) or (math.floor(brkSelf) == 17 and math.round((brkSelf - math.floor(brkSelf)) * 60) == 45))
 lateBuyBar  = pSkipLate and ((math.floor(brkSelf) == 18 and math.round((brkSelf - math.floor(brkSelf)) * 60) >= 15) or (math.floor(brkSelf) == 20 and math.round((brkSelf - math.floor(brkSelf)) * 60) >= 35))
 
@@ -805,6 +823,11 @@ if barstate.isconfirmed and bar_index >= 250
     // =============== PHASE A - execution of the previous bar's intent =======
     // (the EA sends its order on the first tick of the NEXT bar)
     if intentDir != 0 and not na(intentBar) and intentBar < bar_index - 1
+        if not na(activeSignalLabel)
+            label.set_text(activeSignalLabel, "NO ORDER - STALE SIGNAL")
+            label.set_color(activeSignalLabel, color.new(color.gray, 0))
+            label.set_textcolor(activeSignalLabel, color.white)
+            activeSignalLabel := na
         intentDir := 0
     if intentDir != 0 and intentBar == bar_index - 1
         int   dir   = intentDir
@@ -847,6 +870,10 @@ if barstate.isconfirmed and bar_index >= 250
                 pendEngine     := intentEngine
                 pendWindow     := intentWindow
                 pendStartBal   := balance
+                if not na(activeSignalLabel)
+                    label.set_text(activeSignalLabel, (dir > 0 ? "BUY" : "SELL") + " - " + intentEngine + "\nLIMIT WAIT")
+                    label.set_color(activeSignalLabel, color.new(#EF6C00, 0))
+                    label.set_textcolor(activeSignalLabel, color.white)
                 barsSinceEntry := 0
                 if pendWindow == "LON10"
                     lonTradesC := lonTradesC + 1
@@ -861,7 +888,7 @@ if barstate.isconfirmed and bar_index >= 250
                     bearSweepActive := false
                 if intentEngine == "GF_SP2L" and not na(intentSpike)
                     lastSpikeTime := intentSpike
-                if showPending
+                if drawPending
                     pendLine   := line.new(time, limPx, time, limPx, xloc.bar_time, extend.right, color.new(color.orange, 0), line.style_solid, 2)
                     pendSlLine := line.new(time, slPx, time, slPx, xloc.bar_time, extend.right, color.new(color.red, 30), line.style_dotted, 1)
                     pendTpLine := line.new(time, tpPx, time, tpPx, xloc.bar_time, extend.right, color.new(color.green, 30), line.style_dotted, 1)
@@ -887,8 +914,12 @@ if barstate.isconfirmed and bar_index >= 250
                     posEntryTime := time
                     posStartBal  := balance
                     posId        := posId + 1
+                    if not na(activeSignalLabel)
+                        label.set_text(activeSignalLabel, (posDir > 0 ? "BUY" : "SELL") + " - " + posEngine + "\nOPEN @ " + f_px(posEntry))
+                        label.set_color(activeSignalLabel, color.new(#1565C0, 0))
+                        label.set_textcolor(activeSignalLabel, color.white)
                     pendDir      := 0
-                    if showPending
+                    if drawPending
                         line.delete(pendLine)
                         line.delete(pendSlLine)
                         line.delete(pendTpLine)
@@ -910,7 +941,7 @@ if barstate.isconfirmed and bar_index >= 250
                         preNyTradesC := preNyTradesC - 1
                     if pendWindow == "LON10" and lonTradesC > 0
                         lonTradesC := lonTradesC - 1
-                    if showPending
+                    if drawPending
                         line.delete(pendLine)
                         line.delete(pendSlLine)
                         line.delete(pendTpLine)
@@ -920,6 +951,11 @@ if barstate.isconfirmed and bar_index >= 250
                         pendTpLine := na
                         pendLbl    := na
                     lastEvent := "PENDING INVALIDATED"
+                    if not na(activeSignalLabel)
+                        label.set_text(activeSignalLabel, (dir > 0 ? "BUY" : "SELL") + " - " + intentEngine + "\nNO FILL - INVALIDATED")
+                        label.set_color(activeSignalLabel, color.new(color.gray, 0))
+                        label.set_textcolor(activeSignalLabel, color.white)
+                        activeSignalLabel := na
             else
                 // market execution at the open of this bar
                 posDir       := dir
@@ -938,6 +974,10 @@ if barstate.isconfirmed and bar_index >= 250
                 posEntryTime := time
                 posStartBal  := balance
                 posId        := posId + 1
+                if not na(activeSignalLabel)
+                    label.set_text(activeSignalLabel, (posDir > 0 ? "BUY" : "SELL") + " - " + posEngine + "\nOPEN @ " + f_px(posEntry))
+                    label.set_color(activeSignalLabel, color.new(#1565C0, 0))
+                    label.set_textcolor(activeSignalLabel, color.white)
                 barsSinceEntry := 0
                 if posWindow == "LON10"
                     lonTradesC := lonTradesC + 1
@@ -954,12 +994,18 @@ if barstate.isconfirmed and bar_index >= 250
                     lastSpikeTime := intentSpike
                 evEntry   := true
                 lastEvent := "MARKET " + (dir > 0 ? "BUY" : "SELL") + " " + intentEngine + " " + intentWindow
+        else if not na(activeSignalLabel)
+            label.set_text(activeSignalLabel, (dir > 0 ? "BUY" : "SELL") + " - " + intentEngine + "\nBLOCKED - RISK")
+            label.set_color(activeSignalLabel, color.new(color.gray, 0))
+            label.set_textcolor(activeSignalLabel, color.white)
+            activeSignalLabel := na
         intentDir := 0
 
     // =============== PHASE A2 - pending limit management ===================
     if pendDir != 0 and bar_index > pendCreatedBar
         int  alive = bar_index - pendCreatedBar
-        bool eod   = closeAtNyEnd and ((nyBar >= 16.0 and nyBar < 18.0) or brkBar >= 22.85)
+        int  expiredDir = pendDir
+        bool eod   = closeAtNyEnd and not allDayMode and ((nyBar >= 16.0 and nyBar < 18.0) or brkBar >= 22.85)
         bool filled = pendDir == 1 ? low <= pendPrice : high >= pendPrice
         bool inval  = pendDir == 1 ? low <= pendInval : high >= pendInval
         if alive > pExpiry or eod or (inval and not filled)
@@ -972,7 +1018,7 @@ if barstate.isconfirmed and bar_index >= 250
                 preNyTradesC := preNyTradesC - 1
             if pendWindow == "LON10" and lonTradesC > 0
                 lonTradesC := lonTradesC - 1
-            if showPending
+            if drawPending
                 line.delete(pendLine)
                 line.delete(pendSlLine)
                 line.delete(pendTpLine)
@@ -983,6 +1029,12 @@ if barstate.isconfirmed and bar_index >= 250
                 pendLbl    := na
             pendDir   := 0
             lastEvent := eod ? "PENDING CLOSED (EOD)" : alive > pExpiry ? "PENDING EXPIRED" : "PENDING INVALIDATED"
+            if not na(activeSignalLabel)
+                string noFillTag = eod ? "SESSION CLOSE" : alive > pExpiry ? "EXPIRED" : "INVALIDATED"
+                label.set_text(activeSignalLabel, (expiredDir > 0 ? "BUY" : "SELL") + " - " + pendEngine + "\nNO FILL - " + noFillTag)
+                label.set_color(activeSignalLabel, color.new(color.gray, 0))
+                label.set_textcolor(activeSignalLabel, color.white)
+                activeSignalLabel := na
         else if filled
             posDir       := pendDir
             posEntry     := pendPrice
@@ -1000,8 +1052,12 @@ if barstate.isconfirmed and bar_index >= 250
             posEntryTime := time
             posStartBal  := pendStartBal
             posId        := posId + 1
+            if not na(activeSignalLabel)
+                label.set_text(activeSignalLabel, (posDir > 0 ? "BUY" : "SELL") + " - " + posEngine + "\nOPEN @ " + f_px(posEntry))
+                label.set_color(activeSignalLabel, color.new(#1565C0, 0))
+                label.set_textcolor(activeSignalLabel, color.white)
             pendDir      := 0
-            if showPending
+            if drawPending
                 line.delete(pendLine)
                 line.delete(pendSlLine)
                 line.delete(pendTpLine)
@@ -1051,7 +1107,7 @@ if barstate.isconfirmed and bar_index >= 250
         bool hitTp       = posDir == 1 ? high >= tp0 : low <= tp0
         bool hitNewSl    = stage > 0 and (posDir == 1 ? low <= newSL : high >= newSL)
         bool wantPartial = usePartial and useStepLock and stage >= 1 and not posPartDone and not na(s1t)
-        bool eodClose    = closeAtNyEnd and ((nyBar >= 16.0 and nyBar < 18.0) or brkBar >= 22.85)
+        bool eodClose    = closeAtNyEnd and not allDayMode and ((nyBar >= 16.0 and nyBar < 18.0) or brkBar >= 22.85)
 
         if eodClose
             exitNow := true
@@ -1118,7 +1174,8 @@ if barstate.isconfirmed and bar_index >= 250
                 slLine    := line.new(posEntryTime, posSL, time, posSL, xloc.bar_time, extend.right, color.new(color.red, 10), line.style_dashed, 1)
                 tpLine    := line.new(posEntryTime, posTP, time, posTP, xloc.bar_time, extend.right, color.new(color.green, 10), line.style_dashed, 1)
                 string etxt = (posDir == 1 ? "^ " : "v ") + posEngine + " - " + posWindow + "\n" + (posDir == 1 ? "BUY " : "SELL ") + f_lots(posInitLots) + " @ " + f_px(posEntry) + "\nSL " + f_px(posSL) + "  (-1.00R)\nTP " + f_px(posTP) + "  (+" + str.tostring(pRrTarget, "#.##") + "R)"
-                label.new(posEntryTime, posEntry, etxt, xloc.bar_time, yloc.price, color.new(ec, 80), posDir == 1 ? label.style_label_up : label.style_label_down, ec, lblSz)
+                if not showSignalMarks
+                    label.new(posEntryTime, posEntry, etxt, xloc.bar_time, yloc.price, color.new(ec, 80), posDir == 1 ? label.style_label_up : label.style_label_down, ec, lblSz)
             if not na(slLine)
                 line.set_xy1(slLine, posEntryTime, posSL)
                 line.set_xy2(slLine, time, posSL)
@@ -1127,7 +1184,7 @@ if barstate.isconfirmed and bar_index >= 250
                 line.set_xy2(tpLine, time, posTP)
             if not na(entryLine)
                 line.set_xy2(entryLine, time, posEntry)
-            if showStepLocks and useStepLock and posRisk > 0
+            if fullChart and showStepLocks and useStepLock and posRisk > 0
                 float a1 = posEntry + posDir * lockStep1 * posRisk
                 float a2 = posEntry + posDir * lockStep2 * posRisk
                 float a3 = posEntry + posDir * lockStep3 * posRisk
@@ -1153,11 +1210,11 @@ if barstate.isconfirmed and bar_index >= 250
     // The EA reads Time[0] (the bar that is just opening) -> Pine `time_close`.
     bool isWhipBar = pSkipWhip and ((hrInt == 16 and minInt == 45) or (hrInt == 17 and minInt == 45))
     bool isLateBuy = pSkipLate and ((hrInt == 18 and minInt >= 15) or (hrInt == 20 and minInt >= 35))
-    bool inLon10   = pLondon and brkNext >= lonStart and brkNext <= lonEnd
-    bool inPreNy   = enablePreNy and brkNext >= preNyStart and brkNext <= preNyEnd
-    bool inNyAm    = brkNext >= nyAmStart and brkNext <= nyAmEnd and not isWhipBar
-    bool inNyPm    = brkNext >= nyPmStart and brkNext <= nyPmEnd
-    string activeWindow = ""
+    bool inLon10   = not allDayMode and pLondon and brkNext >= lonStart and brkNext <= lonEnd
+    bool inPreNy   = not allDayMode and enablePreNy and brkNext >= preNyStart and brkNext <= preNyEnd
+    bool inNyAm    = not allDayMode and brkNext >= nyAmStart and brkNext <= nyAmEnd and not isWhipBar
+    bool inNyPm    = not allDayMode and brkNext >= nyPmStart and brkNext <= nyPmEnd
+    string activeWindow = allDayMode ? "24H" : ""
     if inNyAm and nyAmTradesC < pMaxNyAm
         activeWindow := "NY_AM"
     else if inNyPm and nyPmTradesC < pMaxNyPm
@@ -1166,7 +1223,7 @@ if barstate.isconfirmed and bar_index >= 250
         activeWindow := "PRE_NY"
     else if inLon10 and lonTradesC < 1
         activeWindow := "LON10"
-    bool inTrack = (pLondon and brkNext >= lonStart - 0.5 and brkNext <= lonEnd) or (enablePreNy and brkNext >= preNyStart - 0.5 and brkNext <= trackEnd) or (brkNext >= trackStart and brkNext <= trackEnd)
+    bool inTrack = allDayMode or (pLondon and brkNext >= lonStart - 0.5 and brkNext <= lonEnd) or (enablePreNy and brkNext >= preNyStart - 0.5 and brkNext <= trackEnd) or (brkNext >= trackStart and brkNext <= trackEnd)
     inNyAmOut      := inNyAm
     inNyPmOut      := inNyPm
     inPreNyOut     := inPreNy
@@ -1214,7 +1271,7 @@ if barstate.isconfirmed and bar_index >= 250
                     bearSweepTime   := time
                     break
 
-    if showSweepZones
+    if showSweepZones and fullChart
         if bullSweepActive
             float topB = math.max(bullSweptLevel, bullManipLow)
             float botB = math.min(bullSweptLevel, bullManipLow)
@@ -1293,7 +1350,7 @@ if barstate.isconfirmed and bar_index >= 250
             posPartDone := true
             partialCount := partialCount + 1
             evPartial   := true
-            if showTradeLevels
+            if showTradeLevels and fullChart
                 label.new(time, partialPx, "P " + str.tostring(partialPct, "#") + "% @" + f_px(partialPx) + "\n+" + f_money((partialPx - posEntry) * posDir * partLots * contractSize), xloc.bar_time, yloc.price, color.new(color.teal, 78), posDir == 1 ? label.style_label_down : label.style_label_up, color.new(color.teal, 0), size.tiny)
     if exitNow and posDir != 0 and not na(exitPx)
         float grossExit = (exitPx - posEntry) * posDir * posLots * contractSize
@@ -1358,9 +1415,16 @@ if barstate.isconfirmed and bar_index >= 250
         // exit artwork
         color xc = pnlExit > 0 ? color.new(#00E676, 0) : color.new(#FF1744, 0)
         string xtxt = exitWhy + "  " + f_r(rMult) + "\n" + f_money(pnlExit) + (posPartDone ? "\n(+" + str.tostring(partialPct, "#") + "% partial)" : "")
-        if showTradeLevels or showTradeZones
+        string exitTagForChart = f_exitTag(exitWhy)
+        lastOutcomeText := exitTagForChart + " " + f_r(rMult) + " " + f_money(pnlExit)
+        if not na(activeSignalLabel)
+            label.set_text(activeSignalLabel, (posDir > 0 ? "BUY" : "SELL") + " - " + posEngine + "\n" + exitTagForChart + " - " + f_r(rMult) + "\n" + f_money(pnlExit))
+            label.set_color(activeSignalLabel, pnlExit > 0 ? color.new(#1B5E20, 0) : pnlExit < 0 ? color.new(#B71C1C, 0) : color.new(color.gray, 0))
+            label.set_textcolor(activeSignalLabel, color.white)
+            activeSignalLabel := na
+        if (showTradeLevels or showTradeZones) and not showSignalMarks
             label.new(time, exitPx, xtxt, xloc.bar_time, yloc.price, color.new(xc, 72), posDir == 1 ? label.style_label_down : label.style_label_up, xc, lblSz)
-        if showTradeZones and not na(posEntryTime)
+        if showTradeZones and fullChart and not na(posEntryTime)
             float zTop = math.max(posEntry, exitPx)
             float zBot = math.min(posEntry, exitPx)
             if zTop - zBot < atr1 * 0.35
@@ -1369,15 +1433,23 @@ if barstate.isconfirmed and bar_index >= 250
             int zRight = time > posEntryTime ? time : time + timeframe.in_seconds(timeframe.period) * 1000
             box.new(posEntryTime, zTop, zRight, zBot, color.new(xc, 55), 1, line.style_solid, extend.none, xloc.bar_time, color.new(xc, 90))
         if showTradeLevels
-            if not na(slLine)
-                line.set_x2(slLine, time)
-                line.set_extend(slLine, extend.none)
-            if not na(tpLine)
-                line.set_x2(tpLine, time)
-                line.set_extend(tpLine, extend.none)
-            if not na(entryLine)
-                line.set_x2(entryLine, time)
-                line.set_extend(entryLine, extend.none)
+            if fullChart
+                if not na(slLine)
+                    line.set_x2(slLine, time)
+                    line.set_extend(slLine, extend.none)
+                if not na(tpLine)
+                    line.set_x2(tpLine, time)
+                    line.set_extend(tpLine, extend.none)
+                if not na(entryLine)
+                    line.set_x2(entryLine, time)
+                    line.set_extend(entryLine, extend.none)
+            else
+                if not na(slLine)
+                    line.delete(slLine)
+                if not na(tpLine)
+                    line.delete(tpLine)
+                if not na(entryLine)
+                    line.delete(entryLine)
             if not na(s1Line)
                 line.delete(s1Line)
             if not na(s2Line)
@@ -1466,7 +1538,7 @@ if barstate.isconfirmed and bar_index >= 250
                 sigEngine  := "SILVER_B"
 
     // -- ENGINE 4 - GoldFusion SP2L (NY_PM only by default: 80% WR / +$756) --
-    if sigDir == 0 and eng4On and (not sp2lNyPmOnly or activeWindow == "NY_PM")
+    if sigDir == 0 and eng4On and (allDayMode or not sp2lNyPmOnly or activeWindow == "NY_PM")
         if sp2lDir != 0 and f_gfAllow(sp2lDir, true, close, utStop, bbBasis, bbBasis1)
             sigDir     := sp2lDir
             sigExtreme := sp2lExtreme
@@ -1493,15 +1565,23 @@ if barstate.isconfirmed and bar_index >= 250
         evSignal      := true
         lastEvent     := "SIGNAL " + sigEngine + " " + activeWindow + (sigDir > 0 ? " BUY" : " SELL")
         if showSignalMarks
-            color sc = sigDir > 0 ? color.new(#00E5FF, 0) : color.new(#FFD740, 0)
-            label.new(time, sigDir > 0 ? low - atr1 * 0.9 : high + atr1 * 0.9, (sigDir > 0 ? "^ " : "v ") + sigEngine + "\n" + activeWindow, xloc.bar_time, yloc.price, color.new(sc, 70), sigDir > 0 ? label.style_label_up : label.style_label_down, sc, lblSz)
+            string signalSide = sigDir > 0 ? "BUY" : "SELL"
+            float signalY = sigDir > 0 ? low - atr1 * 0.9 : high + atr1 * 0.9
+            color signalBg = sigDir > 0 ? color.new(#00695C, 0) : color.new(#8E2430, 0)
+            label signalLbl = label.new(time, signalY, signalSide + " - " + sigEngine + "\nSIGNAL - " + activeWindow, xloc.bar_time, yloc.price, signalBg, sigDir > 0 ? label.style_label_up : label.style_label_down, color.white, lblSz)
+            array.push(recentSignalLabels, signalLbl)
+            if array.size(recentSignalLabels) > recentSignalCount
+                label oldSignalLbl = array.shift(recentSignalLabels)
+                if not na(oldSignalLbl)
+                    label.delete(oldSignalLbl)
+            activeSignalLabel := signalLbl
     else if sigDir != 0
         rawWhyOut := not inTrack ? "outside sweep-tracking hours" : activeWindow == "" ? "no killzone window / cap reached" : posDir != 0 ? "position already open" : pendDir != 0 ? "pending order active" : barsSinceEntry < pCooldown ? "cooldown" : "risk out of bounds"
-        if showSignalMarks
+        if showSignalMarks and fullChart
             label.new(time, sigDir > 0 ? low - atr1 * 0.55 : high + atr1 * 0.55, "X " + sigEngine, xloc.bar_time, yloc.price, color.new(color.gray, 78), sigDir > 0 ? label.style_label_up : label.style_label_down, color.new(color.gray, 20), size.tiny)
 
     // -- FVG artwork (only inside tradable hours, keeps the chart readable) --
-    if showFVG and inTrackBar
+    if showFVG and fullChart and inTrackBar
         if bullFvg
             float gTop = low > high[2] ? low : low[1]
             float gBot = low > high[2] ? high[2] : high[3]
@@ -1523,7 +1603,7 @@ if barstate.isconfirmed and bar_index >= 250
 float fpCvd     = na
 float fpLastDlt = na
 float fpPocPx   = na
-if showFootprint and barstate.islast and bar_index > fpBars + 3
+if showFootprint and fullChart and barstate.islast and bar_index > fpBars + 3
     if array.size(fpBoxes) > 0
         for i = 0 to array.size(fpBoxes) - 1
             box.delete(array.get(fpBoxes, i))
@@ -1627,28 +1707,26 @@ if showFootprint and barstate.islast and bar_index > fpBars + 3
 floatPnl := posDir != 0 and not na(posEntry) ? (close - posEntry) * posDir * posLots * contractSize + posRealized : 0.0
 float equityNow = balance + floatPnl
 
-plot(showLiquidity and asianHigh > 0 ? asianHigh : na,       "Asian High",     color.new(#FFD700, 25),   1, plot.style_linebr)
-plot(showLiquidity and asianLow > 0 and asianLow < 1e8 ? asianLow : na, "Asian Low", color.new(#FFD700, 25), 1, plot.style_linebr)
-plot(showLiquidity and londonHigh > 0 ? londonHigh : na,     "London High",    color.new(color.silver, 20), 1, plot.style_linebr)
-plot(showLiquidity and londonLow > 0 and londonLow < 1e8 ? londonLow : na, "London Low", color.new(color.silver, 20), 1, plot.style_linebr)
-plot(showLiquidity and pdh > 0 ? pdh : na,                   "Prev Day High",  color.new(#FF9800, 15),      1, plot.style_linebr)
-plot(showLiquidity and pdl > 0 ? pdl : na,                   "Prev Day Low",   color.new(#FF9800, 15),      1, plot.style_linebr)
-plot(showLiquidity and midnightOpen > 0 ? midnightOpen : na, "Midnight Open",  color.new(color.aqua, 25),   1, plot.style_linebr)
-plot(showEmaRibbon ? ema20 : na,                             "EMA 20",         color.new(#29B6F6, 25),      1)
-plot(showEmaRibbon ? ema50 : na,                             "EMA 50",         color.new(#FFB300, 15),      2)
-plot(showEmaRibbon ? ema200 : na,                            "EMA 200",        color.new(#AB47BC, 5),       2)
-plot(showBB50 ? bbBasis : na,                                "BB50 Basis",     color.new(#78909C, 25),      1, plot.style_cross)
-plot(showUtBot ? utStop : na,                                "UT-Bot Trail",   close > utStop ? color.new(#00E676, 0) : color.new(#FF5252, 0), 2)
+plot(fullChart and showLiquidity and asianHigh > 0 ? asianHigh : na,       "Asian High",     color.new(#FFD700, 25),   1, plot.style_linebr)
+plot(fullChart and showLiquidity and asianLow > 0 and asianLow < 1e8 ? asianLow : na, "Asian Low", color.new(#FFD700, 25), 1, plot.style_linebr)
+plot(fullChart and showLiquidity and londonHigh > 0 ? londonHigh : na,     "London High",    color.new(color.silver, 20), 1, plot.style_linebr)
+plot(fullChart and showLiquidity and londonLow > 0 and londonLow < 1e8 ? londonLow : na, "London Low", color.new(color.silver, 20), 1, plot.style_linebr)
+plot(fullChart and showLiquidity and pdh > 0 ? pdh : na,                   "Prev Day High",  color.new(#FF9800, 15),      1, plot.style_linebr)
+plot(fullChart and showLiquidity and pdl > 0 ? pdl : na,                   "Prev Day Low",   color.new(#FF9800, 15),      1, plot.style_linebr)
+plot(fullChart and showLiquidity and midnightOpen > 0 ? midnightOpen : na, "Midnight Open",  color.new(color.aqua, 25),   1, plot.style_linebr)
+plot(fullChart and showEmaRibbon ? ema20 : na,                             "EMA 20",         color.new(#29B6F6, 25),      1)
+plot(fullChart and showEmaRibbon ? ema50 : na,                             "EMA 50",         color.new(#FFB300, 15),      2)
+plot(fullChart and showEmaRibbon ? ema200 : na,                            "EMA 200",        color.new(#AB47BC, 5),       2)
+plot(fullChart and showBB50 ? bbBasis : na,                                "BB50 Basis",     color.new(#78909C, 25),      1, plot.style_cross)
+plot(fullChart and showUtBot ? utStop : na,                                "UT-Bot Trail",   close > utStop ? color.new(#00E676, 0) : color.new(#FF5252, 0), 2)
 
 color kzBg = inNyAmBar ? color.new(#FF9800, 92) : inNyPmBar ? color.new(#7E57C2, 90) : inPreNyBar ? color.new(#29B6F6, 92) : inLonBar ? color.new(#66BB6A, 93) : na
-bgcolor(showKillzones ? kzBg : na, title = "Killzone Windows")
-bgcolor(showKillzones and whipBarNow ? color.new(#F44336, 84) : na, title = "NYSE Whip Bar (skipped)")
-bgcolor(showKillzones and lateBuyBar ? color.new(#795548, 88) : na, title = "Late-Buy Block Bar")
-bgcolor(showKillzones and not inTrackBar ? color.new(#263238, 94) : na, title = "Outside Sweep Tracking")
+bgcolor(fullChart and showKillzones ? kzBg : na, title = "Killzone Windows")
+bgcolor(fullChart and showKillzones and whipBarNow ? color.new(#F44336, 84) : na, title = "NYSE Whip Bar (skipped)")
+bgcolor(fullChart and showKillzones and lateBuyBar ? color.new(#795548, 88) : na, title = "Late-Buy Block Bar")
+bgcolor(fullChart and showKillzones and not inTrackBar ? color.new(#263238, 94) : na, title = "Outside Sweep Tracking")
 
-plotshape(showSignalMarks and sigDirOut > 0, "Long Setup",  shape.triangleup,   location.belowbar, color.new(#00E5FF, 0), size = size.small, text = "")
-plotshape(showSignalMarks and sigDirOut < 0, "Short Setup", shape.triangledown, location.abovebar, color.new(#FFD740, 0), size = size.small, text = "")
-plotshape(showSignalMarks and rawDirOut != 0 and sigDirOut == 0, "Blocked Setup", shape.xcross, location.abovebar, color.new(color.gray, 45), size = size.tiny, text = "")
+plotshape(showSignalMarks and fullChart and rawDirOut != 0 and sigDirOut == 0, "Blocked Setup", shape.xcross, location.abovebar, color.new(color.gray, 45), size = size.tiny, text = "")
 
 //  TABLES
 f_hdr(table t, int r, string txt, int cols) =>
@@ -1683,7 +1761,34 @@ string pendTxt   = pendDir == 0 ? "-" : (pendDir > 0 ? "BUY LIMIT " : "SELL LIMI
 string sweepTxt  = (bullSweepActive ? "SSL swept " + f_px(bullSweptLevel) + " (" + str.tostring(bullSweepBars) + "/" + str.tostring(pMaxMss) + ")" : "SSL -") + "\n" + (bearSweepActive ? "BSL swept " + f_px(bearSweptLevel) + " (" + str.tostring(bearSweepBars) + "/" + str.tostring(pMaxMss) + ")" : "BSL -")
 string biasTxt   = bullBiasOut and not bearBiasOut ? "BULL" : bearBiasOut and not bullBiasOut ? "BEAR" : bullBiasOut and bearBiasOut ? "CONFLICT" : "FLAT / FILTERED"
 
-if showTable and barstate.islast
+string compactCurrent = posDir != 0 ? posTxt + " - " + f_money(floatPnl) : pendDir != 0 ? pendTxt : "FLAT"
+if cleanChart and showTable and barstate.islast
+    if na(compactTbl)
+        compactTbl := table.new(statsPos, 2, 11, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
+        table.merge_cells(compactTbl, 0, 0, 1, 0)
+        table.merge_cells(compactTbl, 0, 10, 1, 10)
+    f_hdr(compactTbl, 0, "AMD FUSION - CLEAN RESULTS", 2)
+    f_k(compactTbl, 0, 1, "Closed trades")
+    f_v(compactTbl, 1, 1, str.tostring(trades), tblFg)
+    f_k(compactTbl, 0, 2, "Win rate")
+    f_v(compactTbl, 1, 2, f_pct(winRate), winRate >= 50 ? color.new(#00E676, 0) : color.new(#FF5252, 0))
+    f_k(compactTbl, 0, 3, "TP hits")
+    f_v(compactTbl, 1, 3, str.tostring(tpHits), color.new(#00E676, 0))
+    f_k(compactTbl, 0, 4, "SL hits")
+    f_v(compactTbl, 1, 4, str.tostring(slHits), color.new(#FF5252, 0))
+    f_k(compactTbl, 0, 5, "Locked SL exits")
+    f_v(compactTbl, 1, 5, str.tostring(lockExits), color.new(#26C6DA, 0))
+    f_k(compactTbl, 0, 6, "Net P&L")
+    f_v(compactTbl, 1, 6, f_money(netProfit), f_pnlColor(netProfit))
+    f_k(compactTbl, 0, 7, "Current trade")
+    f_v(compactTbl, 1, 7, compactCurrent, posDir != 0 ? color.new(#29B6F6, 0) : tblFg)
+    f_k(compactTbl, 0, 8, "Last result")
+    f_v(compactTbl, 1, 8, lastOutcomeText, color.new(#FFD740, 0))
+    f_k(compactTbl, 0, 9, "Signals kept")
+    f_v(compactTbl, 1, 9, str.tostring(array.size(recentSignalLabels)) + " / " + str.tostring(recentSignalCount), tblFg)
+    f_hdr(compactTbl, 10, allDayMode ? "24H MODE - ALL WINDOWS" : "SESSION WINDOWS - BROKER TIME", 2)
+
+if fullChart and showTable and barstate.islast
     if na(statsTbl)
         statsTbl := table.new(statsPos, 4, 30, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
     f_hdr(statsTbl, 0, "AMD + GOLDFUSION v3.40 - SIMULATION LEDGER", 4)
@@ -1778,7 +1883,7 @@ if showTable and barstate.islast
     f_k(statsTbl, 0, 26, "Trend bias")
     f_v(statsTbl, 1, 26, biasTxt, bullBiasOut ? color.new(#00E676, 0) : bearBiasOut ? color.new(#FF5252, 0) : color.new(color.white, 40))
     f_k(statsTbl, 2, 26, "Counters AM/PM")
-    f_v(statsTbl, 3, 26, str.tostring(nyAmTradesC) + "/" + str.tostring(pMaxNyAm) + " - " + str.tostring(nyPmTradesC) + "/" + str.tostring(pMaxNyPm), tblFg)
+    f_v(statsTbl, 3, 26, allDayMode ? "24H - no session caps" : str.tostring(nyAmTradesC) + "/" + str.tostring(pMaxNyAm) + " - " + str.tostring(nyPmTradesC) + "/" + str.tostring(pMaxNyPm), tblFg)
     f_k(statsTbl, 0, 27, "Pending order")
     f_v(statsTbl, 1, 27, pendTxt, pendDir == 0 ? color.new(color.white, 45) : color.new(#FFA726, 0))
     f_k(statsTbl, 2, 27, "Cooldown left")
@@ -1787,11 +1892,11 @@ if showTable and barstate.islast
     f_wide(statsTbl, 1, 28, lastEvent, color.new(#FFD740, 0), 3)
     f_hdr(statsTbl, 29, "NON-REPAINT - closed-bar evaluation - " + timeframe.period + " - " + str.tostring(trades) + " simulated trades", 4)
 
-if showBreakdown and barstate.islast
+if fullChart and showBreakdown and barstate.islast
     if na(brkTbl)
-        brkTbl := table.new(brkPos, 4, 13, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
+        brkTbl := table.new(brkPos, 4, 14, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
     array<string> eNames = array.from("Engine 1 - AMD Sweep", "Engine 2 - L3 Turtle", "Engine 3 - Silver Bullet", "Engine 4 - GF SP2L", "Other")
-    array<string> wNames = array.from("NY_AM 16:00-18:15", "NY_PM 20:00-20:45", "PRE_NY 14:00-15:30", "LON10 10:00-10:45", "Other")
+    array<string> wNames = array.from("NY_AM 16:00-18:15", "NY_PM 20:00-20:45", "PRE_NY 14:00-15:30", "LON10 10:00-10:45", allDayMode ? "24H mode" : "Other")
     f_hdr(brkTbl, 0, "PERFORMANCE BREAKDOWN", 4)
     f_k(brkTbl, 0, 1, "Engine")
     f_v(brkTbl, 1, 1, "Trades", color.new(color.white, 40))
@@ -1810,7 +1915,7 @@ if showBreakdown and barstate.islast
     f_v(brkTbl, 1, 8, "Trades", color.new(color.white, 40))
     f_v(brkTbl, 2, 8, "WR", color.new(color.white, 40))
     f_v(brkTbl, 3, 8, "Net $", color.new(color.white, 40))
-    for i = 0 to 3
+    for i = 0 to 4
         float tN = array.get(winTrades, i)
         float wN = array.get(winWins, i)
         float pN = array.get(winPnl, i)
@@ -1819,7 +1924,7 @@ if showBreakdown and barstate.islast
         f_v(brkTbl, 2, 9 + i, tN > 0 ? f_pct(wN / tN * 100.0) : "-", tN > 0 and wN / tN >= 0.5 ? color.new(#00E676, 0) : color.new(#FF5252, 0))
         f_v(brkTbl, 3, 9 + i, tN > 0 ? f_money(pN) : "-", f_pnlColor(pN))
 
-if showDashboard and barstate.islast
+if fullChart and showDashboard and barstate.islast
     if na(dashTbl)
         dashTbl := table.new(dashPos2, 2, 20, tblBg, color.new(color.gray, 65), 1, color.new(color.gray, 45), 1)
     f_hdr(dashTbl, 0, "LIVE DECISION ENGINE  (bar closed: " + str.format_time(time, "yy/MM/dd HH:mm", syminfo.timezone) + ")", 2)
@@ -1840,7 +1945,7 @@ if showDashboard and barstate.islast
     f_k(dashTbl, 0, 8, "Reversal-shield vote")
     f_v(dashTbl, 1, 8, pbVoteOut == 0 ? "no pullback vote" : (pbVoteOut > 0 ? "BULL quorum building" : "BEAR quorum building") + (shieldFired ? "  ! FIRED" : ""), pbVoteOut == 0 ? color.new(color.white, 45) : color.new(#FFA726, 0))
     f_k(dashTbl, 0, 9, "Engines armed")
-    f_v(dashTbl, 1, 9, (pEng1 ? "E1+ " : "E1x ") + (pEng2 ? "E2+ " : "E2x ") + (pEng3 ? "E3+ " : "E3x ") + (eng4On ? "E4+" : "E4x") + (eng4On and sp2lNyPmOnly ? " (NY_PM)" : ""), tblFg)
+    f_v(dashTbl, 1, 9, (pEng1 ? "E1+ " : "E1x ") + (pEng2 ? "E2+ " : "E2x ") + (pEng3 ? "E3+ " : "E3x ") + (eng4On ? "E4+" : "E4x") + (eng4On and allDayMode ? " (24H)" : eng4On and sp2lNyPmOnly ? " (NY_PM)" : ""), tblFg)
     f_k(dashTbl, 0, 10, "Raw setup this bar")
     f_v(dashTbl, 1, 10, rawDirOut == 0 ? "none" : rawEngineOut + (rawDirOut > 0 ? " BUY" : " SELL") + (rawWhyOut == "" ? " -> ORDER SENT" : " -> blocked: " + rawWhyOut), rawDirOut == 0 ? color.new(color.white, 45) : rawWhyOut == "" ? color.new(#00E5FF, 0) : color.new(#FF7043, 0))
     f_k(dashTbl, 0, 11, "Open position")
@@ -1854,7 +1959,7 @@ if showDashboard and barstate.islast
     f_k(dashTbl, 0, 15, "Session liquidity")
     f_wide(dashTbl, 1, 15, "Asian  " + (asianHigh > 0 ? f_px(asianHigh) + " / " + f_px(asianLow) : "-") + "\nLondon " + (londonHigh > 0 ? f_px(londonHigh) + " / " + f_px(londonLow) : "-") + "\nPDH " + (pdh > 0 ? f_px(pdh) : "-") + " / PDL " + (pdl > 0 ? f_px(pdl) : "-") + "\nMidnight " + (midnightOpen > 0 ? f_px(midnightOpen) : "-"), color.new(#FFD700, 15), 1)
     f_k(dashTbl, 0, 16, "Trade caps AM/PM/PRE/LON")
-    f_v(dashTbl, 1, 16, str.tostring(nyAmTradesC) + "/" + str.tostring(pMaxNyAm) + " - " + str.tostring(nyPmTradesC) + "/" + str.tostring(pMaxNyPm) + " - " + str.tostring(preNyTradesC) + "/" + str.tostring(maxTradesPreNy) + " - " + str.tostring(lonTradesC) + "/1", tblFg)
+    f_v(dashTbl, 1, 16, allDayMode ? "24H - no per-window caps" : str.tostring(nyAmTradesC) + "/" + str.tostring(pMaxNyAm) + " - " + str.tostring(nyPmTradesC) + "/" + str.tostring(pMaxNyPm) + " - " + str.tostring(preNyTradesC) + "/" + str.tostring(maxTradesPreNy) + " - " + str.tostring(lonTradesC) + "/1", tblFg)
     f_k(dashTbl, 0, 17, "Footprint D last bar")
     f_v(dashTbl, 1, 17, showFootprint ? (na(fpLastDlt) ? "-" : f_vol(fpLastDlt) + (fpLastDlt >= 0 ? " net long" : " net short") + " - POC " + f_px(fpPocPx)) : "disabled", showFootprint ? f_pnlColor(nz(fpLastDlt)) : color.new(color.white, 45))
     f_k(dashTbl, 0, 18, "Footprint CVD (" + str.tostring(fpBars) + " bars)")
@@ -1865,7 +1970,7 @@ if showDashboard and barstate.islast
 // -- environment warnings --
 if barstate.islast
     bool needTf  = requireM15 and not correctTf
-    bool needVol = showFootprint and nz(volume) <= 0
+    bool needVol = fullChart and showFootprint and nz(volume) <= 0
     if needTf or needVol
         if na(warnTbl)
             warnTbl := table.new(position.top_center, 1, 2, color.new(color.black, 100), color.new(color.black, 100), 0)

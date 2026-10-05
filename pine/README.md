@@ -24,12 +24,15 @@ ledger of the simulated trades.
    brokers use, `3` for GMT+3 fixed feeds, `0` for a UTC feed).
    All killzones (16:00–18:15 NY_AM, 20:00–20:45 NY_PM, …) are expressed in **broker
    time**, exactly like the MQL source, so this offset is the single most important input.
-5. Read the three on-chart panels:
-   * **SIMULATION LEDGER** — trades, wins/losses, TP/SL hits, win rate, dollars, PF, DD…
-   * **PERFORMANCE BREAKDOWN** — per engine (AMD / L3 / Silver Bullet / GF-SP2L) and per
-     killzone window (NY_AM / NY_PM / PRE_NY / LON10).
-   * **LIVE DECISION ENGINE** — what the script is thinking on the last closed bar
-     (clock, bias, sweeps, UT-Bot, BB50, filters, counters, position, last event).
+5. The default **Clean (signals + results)** layout keeps the chart readable: it shows
+   the last 30 accepted signals (each label updates to `OPEN`, `TP HIT`, `SL HIT`,
+   `LOCKED SL HIT`, or another exit status), the active Entry/SL/TP ladder, and a compact
+   stats panel with closed-trade count, win rate, TP/SL/locked-SL exits, and net dollar P&L.
+   Set `Recent signal results to keep` to 30–100. Choose **Full analysis** for the extra
+   liquidity/FVG/EMA overlays and the full ledger, breakdown, and decision dashboard.
+6. In `2 · Micro-Killzone Windows`, enable **24-hour trading (ignore time windows)** to
+   bypass session windows/caps and the time-of-day blocks; leave it off to use the
+   broker-time windows below it.
 
 ### راهنمای سریع (فارسی)
 
@@ -37,16 +40,36 @@ ledger of the simulated trades.
   کپی/Save و سپس Add to chart کنید.
 * در تنظیمات، **Broker Winter GMT Offset** را مطابق بروکر خود (معمولاً `2`) وارد کنید؛
   تمام پنجره‌های زمانی (کیل‌زون‌ها) بر اساس **زمان بروکر** محاسبه می‌شوند.
-* جدول **SIMULATION LEDGER** تعداد معاملات، برخوردهای TP/SL، وین‌ریت و سود/زیان دلاری،
-  جدول **PERFORMANCE BREAKDOWN** تفکیک بر اساس موتور و سشن، و جدول **LIVE DECISION
-  ENGINE** وضعیت لحظه‌ای فیلترها را نشان می‌دهد.
-* برای دیدن فوت‌پرینت تقریبی، گزینه **Show Footprint Columns** را روشن کنید.
+* حالت پیش‌فرض **Clean** چارت را خلوت می‌کند: فقط ۳۰ سیگنال پذیرفته‌شدهٔ آخر (با نتیجهٔ
+  TP/SL/قفل یا وضعیت خروج)، نردبان معاملهٔ باز، و جدول خلاصه دیده می‌شود. تعداد را از
+  `Recent signal results to keep` بین ۳۰ تا ۱۰۰ انتخاب کنید. جدول خلاصه، تعداد معاملات بسته‌شده،
+  وین‌ریت، برخورد TP/SL و SL قفل‌شده، و سود/زیان خالص دلاری را نشان می‌دهد. برای همهٔ لایه‌ها و
+  جدول‌های کامل، `Chart Layout` را روی **Full analysis** بگذارید.
+* برای معامله در تمام ساعات، گزینهٔ **24-hour trading (ignore time windows)** را روشن
+  کنید؛ خاموش بودن آن، پنجره‌ها و محدودیت‌های زمانی فعلی را نگه می‌دارد.
+* برای دیدن فوت‌پرینت تقریبی، ابتدا `Chart Layout` را روی **Full analysis** بگذارید و سپس گزینهٔ **Show Footprint Columns** را روشن کنید.
 * اسکریپت **ریپینت ندارد**: همه‌چیز فقط روی کندل بسته‌شده محاسبه و با
   `barstate.isconfirmed` قفل می‌شود.
 
 ---
 
-## 2. What was ported (1:1 with the MQL source)
+## 2. Clean chart, retained signal outcomes, and 24H mode
+
+* `Chart Layout = Clean (signals + results)` is the default. It hides secondary layers and
+  the three large panels, replacing them with one compact summary and the active trade
+  ladder. `Full analysis` restores the optional overlays and full tables.
+* Every accepted setup gets one persistent label. It starts as `SIGNAL`, then updates as
+  its order waits/fills, and finally reports an explicit result such as `TP HIT`, `SL HIT`,
+  `LOCKED SL HIT`, `SHIELD EXIT`, `SESSION CLOSE`, or `NO FILL · EXPIRED`, plus R and dollar
+  P&L. The oldest label is deleted only when the rolling 30–100 label limit is exceeded.
+* `24-hour trading (ignore time windows)` bypasses session windows and per-window caps,
+  the NY_PM-only Engine-4 time gate, NY whip/late-buy time blocks, and NY end-of-session
+  auto-closing. The all-day trades are grouped as `24H mode` in the window breakdown.
+  Cooldown, one-position-at-a-time, strategy filters, and risk checks remain active.
+
+---
+
+## 3. What was ported (1:1 with the MQL source)
 
 | MQL4 component | Pine implementation |
 |---|---|
@@ -80,7 +103,7 @@ the same fills, no lookahead.
 
 ---
 
-## 3. Zero-repaint guarantees
+## 4. Zero-repaint guarantees
 
 * nothing runs per tick: the whole state machine lives inside `if barstate.isconfirmed and bar_index >= 250`; **no** `request.security()`, **no** `lookahead`,
   **no** negative `offset`, **no** `security()`-based higher-timeframe data.
@@ -106,7 +129,7 @@ assumption you control with **`Intra-Bar Fill Assumption`**:
 
 ---
 
-## 4. Statistics tables
+## 5. Statistics tables
 
 **SIMULATION LEDGER** — trades, win rate, wins, losses, TP hits, SL hits, Step-Lock exits,
 shield exits, session-end exits, expired limits, partials taken, average R, net profit,
@@ -124,7 +147,7 @@ starts at **`Simulated Starting Balance`** ($500 by default, matching the EA's b
 
 ---
 
-## 5. Footprint (optional module)
+## 6. Footprint (optional module)
 
 TradingView publishes **one aggregate (tick) volume per bar** — there is no bid/ask tape —
 so a true footprint is impossible. The module therefore builds an honest approximation:
@@ -145,7 +168,7 @@ exchange data, and it is off by default.
 
 ---
 
-## 6. Known differences from MT4
+## 7. Known differences from MT4
 
 | Area | Difference |
 |---|---|
@@ -164,23 +187,23 @@ which stop/target/stage) is identical.
 
 ---
 
-## 7. Input groups
+## 8. Input groups
 
 | Group | Contents |
 |---|---|
 | `0 · Preset, Broker & Session Time` | M15 preset, broker winter GMT + auto-DST, NY timezone, timeframe warning |
 | `1 · Risk, Compounding & 3-Stage Step-Lock` | step compounding, $ per 0.01 lot, risk %, 1.95R target, the three trigger/lock stages, partial size, SL buffer and % clamps |
 | `1b · Simulation Accounting` | starting balance, contract size, lot step/min/max, commission, simulated spread, intra-bar fill assumption |
-| `2 · Micro-Killzone Windows` | entry mode, pullback ratio, pending expiry, whip/late-buy skips, per-window caps, London session, cooldowns, session-end close, and every window boundary in broker hours |
+| `2 · Micro-Killzone Windows` | 24H override, entry mode, pullback ratio, pending expiry, whip/late-buy skips, per-window caps, London session, cooldowns, session-end close, and every window boundary in broker hours |
 | `3 · M15 Core Engines` | strict EMA slope, min/max sweep ATR, MSS bars, displacement body, engine 1/2/3 switches |
 | `4 · GoldFusion v6.3 Modules` | Engine 4 SP2L parameters, NY_PM-only switch, PRE_NY window + cap, UT-Bot, BB50, filter scope, reversal shield |
-| `5 · Chart Visualisation` | killzone backgrounds, liquidity levels, sweep zones, FVG boxes, EMA ribbon, UT-Bot line, BB50, pending ladder, trade ladder, Step-Lock stages, result boxes, signal markers, text size |
+| `5 · Chart Visualisation` | clean/full layout, 30–100 retained signal outcomes, overlays, active trade ladder, result boxes, marker/text size |
 | `6 · Approximated Footprint` | enable, bars back, rows, imbalance ratio, delta tilt, min volume, cell text |
 | `7 · Statistics Tables & Live Dashboard` | table/dashboard switches, positions, text size, colours |
 
 ---
 
-## 8. Alerts
+## 9. Alerts
 
 `alertcondition()` entries are provided for: setup detected, order filled, Step-1 partial,
 position closed, reversal-shield exit, and UT-Bot flips (long/short). Create the alert in
@@ -188,7 +211,7 @@ TradingView with **"Once per bar close"** so it stays in sync with the non-repai
 
 ---
 
-## 9. Disclaimer
+## 10. Disclaimer
 
 This is a research/educational port of an MQL4 expert advisor to Pine Script™. It
 **simulates** the strategy on chart data for visualisation and statistics; it does not
