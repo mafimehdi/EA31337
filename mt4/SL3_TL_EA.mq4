@@ -143,9 +143,9 @@ input double  PartialR          = 1.5;    // ExitModel 0: close half here, move 
 input double  TrailBufAtr       = 0.1;    // ExitModel 0 / TrailByL1: buffer behind L1 swing (x ATR)
 
 input string  s6 = "==== Trading Hours (BROKER SERVER time) ====";
-input bool    UseTradeHours     = true;   // true = active London/NY hours (08:00-19:59 server)
-input string  TradeWindow1      = "08:00-19:59";
-input string  TradeWindow2      = "00:00-00:00";
+input bool    UseTradeHours     = true;   // true = active London/NY hours (08:00-17:59 & 19:15-19:59 server)
+input string  TradeWindow1      = "08:00-17:59";
+input string  TradeWindow2      = "19:15-19:59";
 input bool    TradeMonday       = false;
 input bool    TradeTuesday      = true;
 input bool    TradeWednesday    = true;
