@@ -1,8 +1,8 @@
+//@version=5
 // This Pine Script™ code is subject to the terms of the MIT License.
 // Swing Layer-3 + AMD (Power of 3) + Volume Profile + SuperTrend — Analytical Dashboard
 // Each module works independently; its own verdict is shown in the table.
 // A weighted confluence score produces Entry / Stop / Targets / Exit suggestions.
-//@version=5
 indicator("Swing L3 + AMD + VP + SuperTrend [Dashboard]", shorttitle="SL3-AMD-VP", overlay=true,
      max_bars_back=1500, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
@@ -651,20 +651,17 @@ plot(showST and stDir < 0 ? stLine : na, "SuperTrend Up", color=cBull, style=plo
 plot(showST and stDir > 0 ? stLine : na, "SuperTrend Down", color=cBear, style=plot.style_linebr, linewidth=2)
 
 // ═════════════════════════ ⑤ VOLUME CONFIRMATION ═════════════════════════
-rvol = nz(volume) / math.max(ta.sma(nz(volume), rvolLen), 1e-10)
-sgnVol = close > open ? nz(volume) : close < open ? -nz(volume) : 0.0
-volDelta = math.sum(sgnVol, volN)
-volSumN  = math.sum(nz(volume), volN)
-rvolN    = volSumN / math.max(ta.sma(nz(volume), rvolLen) * volN, 1e-10)
-deltaPct = volSumN > 0 ? volDelta / volSumN : 0.0
-int volState = 0
-string volTxt = ""
-if volMode == "Single bar"
-    volState := rvol >= rvolThr ? (close > open ? 1 : close < open ? -1 : 0) : 0
-    volTxt := "RVOL " + str.tostring(rvol, "#.##") + (rvol >= rvolThr ? (close > open ? " buyers" : " sellers") : " (weak)")
-else
-    volState := rvolN >= rvolThr and math.abs(deltaPct) >= 0.3 ? (deltaPct > 0 ? 1 : -1) : 0
-    volTxt := "RVOL" + str.tostring(volN) + " " + str.tostring(rvolN, "#.##") + " | Δ " + str.tostring(deltaPct * 100, "#") + "%" + (volState == 0 ? " (weak)" : volState > 0 ? " buyers" : " sellers")
+f_vol() =>
+    _rv = nz(volume) / math.max(ta.sma(nz(volume), rvolLen), 1e-10)
+    _sv = close > open ? nz(volume) : close < open ? -nz(volume) : 0.0
+    _vd = math.sum(_sv, volN)
+    _vs = math.sum(nz(volume), volN)
+    _rvN = _vs / math.max(ta.sma(nz(volume), rvolLen) * volN, 1e-10)
+    _dp = _vs > 0 ? _vd / _vs : 0.0
+    _st = volMode == "Single bar" ? (_rv >= rvolThr ? (close > open ? 1 : close < open ? -1 : 0) : 0) : (_rvN >= rvolThr and math.abs(_dp) >= 0.3 ? (_dp > 0 ? 1 : -1) : 0)
+    _tx = volMode == "Single bar" ? "RVOL " + str.tostring(_rv, "#.##") + (_rv >= rvolThr ? (close > open ? " buyers" : " sellers") : " (weak)") : "RVOL" + str.tostring(volN) + " " + str.tostring(_rvN, "#.##") + " | Δ " + str.tostring(_dp * 100, "#") + "%" + (_st == 0 ? " (weak)" : _st > 0 ? " buyers" : " sellers")
+    [_rv, _st, _tx]
+[rvol, volState, volTxt] = f_vol()
 
 // ═════════════════════════ ⑦ ORDER BLOCKS ═════════════════════════
 type Zone
@@ -799,77 +796,9 @@ if array.size(zones) > 0
 
 // ═════════════════════════ CONFLUENCE & TRADE ENGINE ═════════════════════════
 // ═════════════════════════ ⑧ INSTITUTIONAL FOOTPRINTS (proxies) ═════════════════════════
-// 1) real exchange volume (CME futures) — used for markers only (may be delayed on the live bar)
 gcVol = request.security(gcSym, timeframe.period, volume, ignore_invalid_symbol=true, lookahead=barmerge.lookahead_off)
-gcAvg = ta.sma(gcVol, rvolLen)
-gcRel = gcAvg > 0 ? gcVol / gcAvg : na
-heavy = instOn and not na(gcRel) and gcRel >= gcSpike
-rngI = math.max(high - low, syminfo.mintick)
-absorb = heavy and math.abs(close - open) / rngI <= absBody
-volBull = heavy and not absorb and (close > open or (close == open and close - low >= high - close))
-volBear = heavy and not absorb and not volBull
-absBull = absorb and (close - low > high - close or (close - low == high - close and close >= open))
-absBear = absorb and not absBull
-// 2) liquidity pools: previous day high/low, Asia range, equal highs/lows (L1 swings)
 pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
 pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
-var float eqH = na
-var float eqL = na
-var float prevPH = na
-var float prevPL = na
-if not na(ph)
-    if not na(prevPH) and math.abs(ph - prevPH) <= atr14 * eqTolAtr
-        eqH := math.max(ph, prevPH)
-    prevPH := ph
-if not na(pl)
-    if not na(prevPL) and math.abs(pl - prevPL) <= atr14 * eqTolAtr
-        eqL := math.min(pl, prevPL)
-    prevPL := pl
-asiaH = postAcc ? accHi : na
-asiaL = postAcc ? accLo : na
-f_sweepHi(float lvl) => not na(lvl) and high > lvl + atr14 * 0.05 and close < lvl
-f_sweepLo(float lvl) => not na(lvl) and low < lvl - atr14 * 0.05 and close > lvl
-var int lastSwB = na
-var int lastSwS = na
-upW = (high - math.max(open, close)) / math.max(high - low, syminfo.mintick)
-dnW = (math.min(open, close) - low) / math.max(high - low, syminfo.mintick)
-// real sweep = clear rejection wick (>= 40%) or heavy futures volume; max one per side per 8 bars
-sweepBear = instOn and (f_sweepHi(pdh) or f_sweepHi(asiaH) or f_sweepHi(eqH)) and (upW >= 0.4 or heavy) and bar_index - nz(lastSwS, -1000) > 8
-sweepBull = instOn and (f_sweepLo(pdl) or f_sweepLo(asiaL) or f_sweepLo(eqL)) and (dnW >= 0.4 or heavy) and bar_index - nz(lastSwB, -1000) > 8
-if sweepBear
-    lastSwS := bar_index
-if sweepBull
-    lastSwB := bar_index
-poolTxt = sweepBear ? (f_sweepHi(pdh) ? "PDH" : f_sweepHi(asiaH) ? "Asia high" : "equal highs") : sweepBull ? (f_sweepLo(pdl) ? "PDL" : f_sweepLo(asiaL) ? "Asia low" : "equal lows") : ""
-if sweepBear and f_sweepHi(eqH)
-    eqH := na
-if sweepBull and f_sweepLo(eqL)
-    eqL := na
-lo20 = ta.lowest(low, 20)[1]
-hi20 = ta.highest(high, 20)[1]
-// 3) signal: sweep (+ heavy volume = stronger); absorption at an extreme = reversal hint
-var int   instDir = 0
-var int   instBar = na
-var string instTxt = "—"
-if sweepBull and not sweepBear
-    instDir := 1
-    instBar := bar_index
-    instTxt := "Sweep of " + poolTxt + (heavy ? " + " + str.tostring(gcRel, "#.#") + "× GC vol" : "") + " → long bias"
-else if sweepBear and not sweepBull
-    instDir := -1
-    instBar := bar_index
-    instTxt := "Sweep of " + poolTxt + (heavy ? " + " + str.tostring(gcRel, "#.#") + "× GC vol" : "") + " → short bias"
-else if absorb and close > open and low <= lo20
-    instDir := 1
-    instBar := bar_index
-    instTxt := "Absorption at low (" + str.tostring(gcRel, "#.#") + "× GC vol) → long bias"
-else if absorb and close < open and high >= hi20
-    instDir := -1
-    instBar := bar_index
-    instTxt := "Absorption at high (" + str.tostring(gcRel, "#.#") + "× GC vol) → short bias"
-instActive = instOn and instDir != 0 and bar_index - nz(instBar, -100000) <= instHold
-instState = instActive ? instDir : 0
-// 4) COT (weekly)
 cotL = cotOn ? request.security(cotLong, "W", close, ignore_invalid_symbol=true) : na
 cotS = cotOn ? request.security(cotShort, "W", close, ignore_invalid_symbol=true) : na
 cotLc = cotOn ? request.security(cotLong, "W", close - close[cotWeeks], ignore_invalid_symbol=true) : na
@@ -878,17 +807,78 @@ ccL = cotOn ? request.security(cotCL, "W", close, ignore_invalid_symbol=true) : 
 ccS = cotOn ? request.security(cotCS, "W", close, ignore_invalid_symbol=true) : na
 ccLc = cotOn ? request.security(cotCL, "W", close - close[cotWeeks], ignore_invalid_symbol=true) : na
 ccSc = cotOn ? request.security(cotCS, "W", close - close[cotWeeks], ignore_invalid_symbol=true) : na
-useMM = not na(cotL - cotS)
-cotNet = useMM ? cotL - cotS : ccL - ccS
-cotChg = useMM ? cotLc - cotSc : ccLc - ccSc
-// commercials are hedgers: their net SHORT shrinking (net rising) is bullish for price, like MM net rising
-cotTxt = na(cotNet) ? "COT n/a" : "COT " + (useMM ? "MM" : "Comm") + " net " + str.tostring(cotNet / 1000, "#.#") + "k (" + (cotChg >= 0 ? "+" : "") + str.tostring(cotChg / 1000, "#.#") + "k/" + str.tostring(cotWeeks) + "w " + (cotChg >= 0 ? "↑" : "↓") + ")"
+f_sweepHi(float lvl) => not na(lvl) and high > lvl + atr14 * 0.05 and close < lvl
+f_sweepLo(float lvl) => not na(lvl) and low < lvl - atr14 * 0.05 and close > lvl
+f_inst() =>
+    _gcAvg = ta.sma(gcVol, rvolLen)
+    _gcR = _gcAvg > 0 ? gcVol / _gcAvg : na
+    _hvy = instOn and not na(_gcR) and _gcR >= gcSpike
+    _rngI = math.max(high - low, syminfo.mintick)
+    _absB = _hvy and math.abs(close - open) / _rngI <= absBody
+    var float _eqH = na
+    var float _eqL = na
+    var float _prevPH = na
+    var float _prevPL = na
+    if not na(ph)
+        if not na(_prevPH) and math.abs(ph - _prevPH) <= atr14 * eqTolAtr
+            _eqH := math.max(ph, _prevPH)
+        _prevPH := ph
+    if not na(pl)
+        if not na(_prevPL) and math.abs(pl - _prevPL) <= atr14 * eqTolAtr
+            _eqL := math.min(pl, _prevPL)
+        _prevPL := pl
+    _asiaH = postAcc ? accHi : na
+    _asiaL = postAcc ? accLo : na
+    var int _lastSwB = na
+    var int _lastSwS = na
+    _upW = (high - math.max(open, close)) / _rngI
+    _dnW = (math.min(open, close) - low) / _rngI
+    _swBear = instOn and (f_sweepHi(pdh) or f_sweepHi(_asiaH) or f_sweepHi(_eqH)) and (_upW >= 0.4 or _hvy) and bar_index - nz(_lastSwS, -1000) > 8
+    _swBull = instOn and (f_sweepLo(pdl) or f_sweepLo(_asiaL) or f_sweepLo(_eqL)) and (_dnW >= 0.4 or _hvy) and bar_index - nz(_lastSwB, -1000) > 8
+    if _swBear
+        _lastSwS := bar_index
+    if _swBull
+        _lastSwB := bar_index
+    _poolTxt = _swBear ? (f_sweepHi(pdh) ? "PDH" : f_sweepHi(_asiaH) ? "Asia high" : "equal highs") : _swBull ? (f_sweepLo(pdl) ? "PDL" : f_sweepLo(_asiaL) ? "Asia low" : "equal lows") : ""
+    if _swBear and f_sweepHi(_eqH)
+        _eqH := na
+    if _swBull and f_sweepLo(_eqL)
+        _eqL := na
+    _lo20 = ta.lowest(low, 20)[1]
+    _hi20 = ta.highest(high, 20)[1]
+    var int   _instDir = 0
+    var int   _instBar = na
+    var string _iTxt = "—"
+    if _swBull and not _swBear
+        _instDir := 1
+        _instBar := bar_index
+        _iTxt := "Sweep of " + _poolTxt + (_hvy ? " + " + str.tostring(_gcR, "#.#") + "× GC vol" : "") + " → long bias"
+    else if _swBear and not _swBull
+        _instDir := -1
+        _instBar := bar_index
+        _iTxt := "Sweep of " + _poolTxt + (_hvy ? " + " + str.tostring(_gcR, "#.#") + "× GC vol" : "") + " → short bias"
+    else if _absB and close > open and low <= _lo20
+        _instDir := 1
+        _instBar := bar_index
+        _iTxt := "Absorption at low (" + str.tostring(_gcR, "#.#") + "× GC vol) → long bias"
+    else if _absB and close < open and high >= _hi20
+        _instDir := -1
+        _instBar := bar_index
+        _iTxt := "Absorption at high (" + str.tostring(_gcR, "#.#") + "× GC vol) → short bias"
+    _iAct = instOn and _instDir != 0 and bar_index - nz(_instBar, -100000) <= instHold
+    _iSt = _iAct ? _instDir : 0
+    _useMM = not na(cotL - cotS)
+    _cotNet = _useMM ? cotL - cotS : ccL - ccS
+    _cotChg = _useMM ? cotLc - cotSc : ccLc - ccSc
+    _cTxt = na(_cotNet) ? "COT n/a" : "COT " + (_useMM ? "MM" : "Comm") + " net " + str.tostring(_cotNet / 1000, "#.#") + "k (" + (_cotChg >= 0 ? "+" : "") + str.tostring(_cotChg / 1000, "#.#") + "k/" + str.tostring(cotWeeks) + "w " + (_cotChg >= 0 ? "↑" : "↓") + ")"
+    [_gcR, _hvy, _absB, _eqH, _eqL, _swBull, _swBear, _iTxt, _iAct, _iSt, _cTxt]
+[gcRel, heavy, absorb, eqH, eqL, sweepBull, sweepBear, instTxt, instActive, instState, cotTxt] = f_inst()
 plotshape(showInst and sweepBull, "Liquidity sweep (bull)", shape.labelup, location.belowbar, color.new(color.teal, 20), text="Sweep", textcolor=color.white, size=size.tiny)
 plotshape(showInst and sweepBear, "Liquidity sweep (bear)", shape.labeldown, location.abovebar, color.new(color.maroon, 20), text="Sweep", textcolor=color.white, size=size.tiny)
-plotshape(showInst and volBull, "Heavy futures volume (bull)", shape.labelup, location.belowbar, cBull, text="Vol", textcolor=color.white, size=size.tiny)
-plotshape(showInst and volBear, "Heavy futures volume (bear)", shape.labeldown, location.abovebar, cBear, text="Vol", textcolor=color.white, size=size.tiny)
-plotshape(showInst and absBull, "Absorption (bull)", shape.labelup, location.belowbar, cBull, text="Absorb", textcolor=color.white, size=size.tiny)
-plotshape(showInst and absBear, "Absorption (bear)", shape.labeldown, location.abovebar, cBear, text="Absorb", textcolor=color.white, size=size.tiny)
+plotshape(showInst and heavy and not absorb and close >= open, "Heavy futures volume (bull)", shape.labelup, location.belowbar, cBull, text="Vol", textcolor=color.white, size=size.tiny)
+plotshape(showInst and heavy and not absorb and close < open, "Heavy futures volume (bear)", shape.labeldown, location.abovebar, cBear, text="Vol", textcolor=color.white, size=size.tiny)
+plotshape(showInst and absorb and close - low >= high - close, "Absorption (bull)", shape.labelup, location.belowbar, cBull, text="Absorb", textcolor=color.white, size=size.tiny)
+plotshape(showInst and absorb and close - low < high - close, "Absorption (bear)", shape.labeldown, location.abovebar, cBear, text="Absorb", textcolor=color.white, size=size.tiny)
 plot(showInst and instOn ? eqH : na, "Equal highs (liquidity)", color=color.new(color.maroon, 30), style=plot.style_linebr, linewidth=1)
 plot(showInst and instOn ? eqL : na, "Equal lows (liquidity)", color=color.new(color.teal, 30), style=plot.style_linebr, linewidth=1)
 alertcondition(sweepBull or sweepBear, "Liquidity sweep", "SL3-AMD-VP: liquidity sweep on {{ticker}}")
@@ -1815,15 +1805,16 @@ if barstate.islast and showAna
     table.cell(ana, 0, 0, aNote, text_color=color.new(color.white, 5), text_size=szT, text_halign=text.align_right, text_valign=text.align_top)
 
 // ═════════════════════════ PIN BARS (yellow candles) ═════════════════════════
-pinRng = high - low
-pinUpW = pinRng > 0 ? (high - math.max(open, close)) / pinRng * 100 : 0
-pinDnW = pinRng > 0 ? (math.min(open, close) - low) / pinRng * 100 : 0
-pinBd  = pinRng > 0 ? math.abs(close - open) / pinRng * 100 : 100
-pinOk  = pinRng >= atr14 * pinMinAtr and pinBd <= pinBody
-pinPrLo = ta.lowest(low, pinLook)[1]
-pinPrHi = ta.highest(high, pinLook)[1]
-pinBull = pinOk and pinDnW >= pinWick and pinUpW <= pinOpp and (not pinProt or low < pinPrLo)
-pinBear = pinOk and pinUpW >= pinWick and pinDnW <= pinOpp and (not pinProt or high > pinPrHi)
+f_pin() =>
+    _pr = high - low
+    _uw = _pr > 0 ? (high - math.max(open, close)) / _pr * 100 : 0
+    _dw = _pr > 0 ? (math.min(open, close) - low) / _pr * 100 : 0
+    _bd = _pr > 0 ? math.abs(close - open) / _pr * 100 : 100
+    _ok = _pr >= atr14 * pinMinAtr and _bd <= pinBody
+    _pLo = ta.lowest(low, pinLook)[1]
+    _pHi = ta.highest(high, pinLook)[1]
+    [_ok and _dw >= pinWick and _uw <= pinOpp and (not pinProt or low < _pLo), _ok and _uw >= pinWick and _dw <= pinOpp and (not pinProt or high > _pHi)]
+[pinBull, pinBear] = f_pin()
 barcolor(showPin and (pinBull or pinBear) ? color.yellow : na, title="Pin bar")
 plotshape(showPin and pinBull, "Bullish pin bar ▲", shape.labelup, location.belowbar, color.yellow, text="Pin▲", textcolor=color.black, size=size.tiny)
 plotshape(showPin and pinBear, "Bearish pin bar ▼", shape.labeldown, location.abovebar, color.yellow, text="Pin▼", textcolor=color.black, size=size.tiny)
