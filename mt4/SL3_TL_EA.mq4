@@ -11,7 +11,7 @@
 //|   - Optional Break-Even & Trailing on Structural TP trades        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "2.80"
+#property version   "2.90"
 
 //==================== INPUTS ====================
 input string  s0 = "==== General & Risk ====";
@@ -78,8 +78,8 @@ input string  s4 = "==== Modules (Swings, HTF, ST, VP, OB, AMD, Inst, TL) ====";
 input int     AtrLen            = 14;
 input int     PivLeft           = 3;
 input int     PivRight          = 2;
-input int     HtfTf             = 60;      // HTF structure timeframe in minutes (60=H1 Champion, 240=H4, 1440=D1)
-input int     HtfPivot          = 2;       // HTF pivot length
+input int     HtfTf             = 240;     // HTF structure timeframe in minutes (240=H4 Champion, 60=H1, 1440=D1)
+input int     HtfPivot          = 1;       // HTF pivot length (1 = fast 4H confirmation, 2 = standard H1)
 input double  StFactor          = 3.0;
 input int     StAtr             = 10;
 input int     VpLookback        = 200;
@@ -164,6 +164,7 @@ input int     WVol              = 1;
 input int     WInst             = 1;
 input bool    RequireHtf        = true;
 input bool    RequireSt         = true;   // Legacy: require M15 SuperTrend aligned with trade direction
+input bool    BlockOpposedVol   = true;   // Legacy: block entry if Volume Delta (volState) is opposed (-dir)
 input double  MinAtrUsd         = 7.8;    // minimum M15 ATR(14) in $ to allow entry (0 = off, skips dead flat market)
 
 //==================== GLOBALS ====================
@@ -1267,8 +1268,8 @@ void TryEntry()
    }
    int dir = 0;
    bool gate = (tlDir != 0 && tlAge <= TlValidBars);
-   if (gate && tlDir == 1 && scorePct >= MinScorePct && (!RequireHtf || htfDir == 1) && (!RequireSt || stState == 1)) dir = 1;
-   if (gate && tlDir == -1 && scorePct <= -MinScorePct && (!RequireHtf || htfDir == -1) && (!RequireSt || stState == -1)) dir = -1;
+   if (gate && tlDir == 1 && scorePct >= MinScorePct && (!RequireHtf || htfDir == 1) && (!RequireSt || stState == 1) && (!BlockOpposedVol || volState != -1)) dir = 1;
+   if (gate && tlDir == -1 && scorePct <= -MinScorePct && (!RequireHtf || htfDir == -1) && (!RequireSt || stState == -1) && (!BlockOpposedVol || volState != 1)) dir = -1;
    if (dir == 0) return;
    RefreshRates();
    double e = (dir == 1) ? Ask : Bid;
