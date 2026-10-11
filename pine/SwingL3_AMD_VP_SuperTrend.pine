@@ -806,6 +806,10 @@ gcRel = gcAvg > 0 ? gcVol / gcAvg : na
 heavy = instOn and not na(gcRel) and gcRel >= gcSpike
 rngI = math.max(high - low, syminfo.mintick)
 absorb = heavy and math.abs(close - open) / rngI <= absBody
+volBull = heavy and not absorb and (close > open or (close == open and close - low >= high - close))
+volBear = heavy and not absorb and not volBull
+absBull = absorb and (close - low > high - close or (close - low == high - close and close >= open))
+absBear = absorb and not absBull
 // 2) liquidity pools: previous day high/low, Asia range, equal highs/lows (L1 swings)
 pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
 pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
@@ -881,8 +885,10 @@ cotChg = useMM ? cotLc - cotSc : ccLc - ccSc
 cotTxt = na(cotNet) ? "COT n/a" : "COT " + (useMM ? "MM" : "Comm") + " net " + str.tostring(cotNet / 1000, "#.#") + "k (" + (cotChg >= 0 ? "+" : "") + str.tostring(cotChg / 1000, "#.#") + "k/" + str.tostring(cotWeeks) + "w " + (cotChg >= 0 ? "↑" : "↓") + ")"
 plotshape(showInst and sweepBull, "Liquidity sweep (bull)", shape.labelup, location.belowbar, color.new(color.teal, 20), text="Sweep", textcolor=color.white, size=size.tiny)
 plotshape(showInst and sweepBear, "Liquidity sweep (bear)", shape.labeldown, location.abovebar, color.new(color.maroon, 20), text="Sweep", textcolor=color.white, size=size.tiny)
-plotshape(showInst and heavy and not absorb, "Heavy futures volume", shape.labeldown, location.abovebar, color.new(color.purple, 10), text="Vol", textcolor=color.white, size=size.tiny)
-plotshape(showInst and absorb, "Absorption", shape.labeldown, location.abovebar, color.new(color.orange, 0), text="Absorb", textcolor=color.black, size=size.tiny)
+plotshape(showInst and volBull, "Heavy futures volume (bull)", shape.labelup, location.belowbar, cBull, text="Vol", textcolor=color.white, size=size.tiny)
+plotshape(showInst and volBear, "Heavy futures volume (bear)", shape.labeldown, location.abovebar, cBear, text="Vol", textcolor=color.white, size=size.tiny)
+plotshape(showInst and absBull, "Absorption (bull)", shape.labelup, location.belowbar, cBull, text="Absorb", textcolor=color.white, size=size.tiny)
+plotshape(showInst and absBear, "Absorption (bear)", shape.labeldown, location.abovebar, cBear, text="Absorb", textcolor=color.white, size=size.tiny)
 plot(showInst and instOn ? eqH : na, "Equal highs (liquidity)", color=color.new(color.maroon, 30), style=plot.style_linebr, linewidth=1)
 plot(showInst and instOn ? eqL : na, "Equal lows (liquidity)", color=color.new(color.teal, 30), style=plot.style_linebr, linewidth=1)
 alertcondition(sweepBull or sweepBear, "Liquidity sweep", "SL3-AMD-VP: liquidity sweep on {{ticker}}")
