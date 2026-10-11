@@ -120,12 +120,12 @@ input double  MaxSlUsd          = 95.0;   // skip trade if stop farther than thi
 input double  MinSlUsd          = 12.5;   // minimum stop distance in $ price (0 = off)
 input bool    PadMinSl          = true;   // true = pad SL to MinSlUsd (Champion v2.10 mode), false = skip trade
 input double  MinSlAtr          = 0.0;    // skip trade if stop closer than this (x ATR, 0 = off)
-input double  WideSlUsd         = 70.0;   // if SL distance >= this $, cap open trades to MaxOpenWideSl (0 = off)
+input double  WideSlUsd         = 0.0;    // if SL distance >= this $, cap open trades to MaxOpenWideSl (0 = off)
 input int     MaxOpenWideSl     = 1;      // max simultaneous open trades when SL >= WideSlUsd
 input double  MaxRiskPct        = 0.0;    // skip trade if real risk after lot rounding exceeds this % (0 = off)
 input double  BeTriggerR        = 0.0;    // move SL to Break-Even (+BeLockUsd) at this R profit (0 = off)
 input double  BeLockUsd         = 0.50;   // $ locked above/below entry when Break-Even triggers
-input bool    DynamicTrail      = true;   // Regime-Adaptive Dynamic Trailing (Strong vs Normal vs Range/Trend-Flip)
+input bool    DynamicTrail      = false;  // Regime-Adaptive Dynamic Trailing (Strong vs Normal vs Range/Trend-Flip)
 input double  DynStrongStartR   = 0.0;    // Dynamic Trail: start R in Strong Trend (0 = let 2R run uncapped!)
 input double  DynStrongDistR    = 1.25;   // Dynamic Trail: distance R in Strong Trend
 input double  DynNormStartR     = 1.80;   // Dynamic Trail: start R in Normal Trend (1.80R = late lock near TP)
@@ -135,7 +135,7 @@ input double  DynRangeDistR     = 0.45;   // Dynamic Trail: distance R in Range 
 input double  TrailStartR       = 0.0;    // Fixed trailing start R when DynamicTrail = false (0 = off)
 input double  TrailDistR        = 0.85;   // Fixed trailing distance R when DynamicTrail = false
 input double  TrailStepR        = 0.10;   // minimum step in R to modify trailing SL
-input bool    LockOnSiblingTP   = true;   // when 1 trade in cluster hits TP, protect remaining trades at SiblingLockR
+input bool    LockOnSiblingTP   = false;  // when 1 trade in cluster hits TP, protect remaining trades at SiblingLockR
 input double  SiblingLockR      = 0.05;   // R locked when sibling hits TP (0.05R = risk-free BE with full pullback room)
 input bool    TrailByL1         = false;  // also trail behind L1 swing in Range/Weak regime
 input bool    LogTradeRegime    = true;   // print entry & trailing regime diagnostics to MT4 Journal log
