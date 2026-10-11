@@ -1267,7 +1267,8 @@ void TryEntry()
       if (EngineMode == 0) return;
    }
    int dir = 0;
-   bool gate = (tlDir != 0 && tlAge <= TlValidBars);
+   bool tlHour18Blocked = (UseTradeHours && TimeHour(tlTime) == 18 && !TradeTimeOK(tlTime));
+   bool gate = (tlDir != 0 && tlAge <= TlValidBars && !tlHour18Blocked);
    if (gate && tlDir == 1 && scorePct >= MinScorePct && (!RequireHtf || htfDir == 1) && (!RequireSt || stState == 1) && (!BlockOpposedVol || volState != -1)) dir = 1;
    if (gate && tlDir == -1 && scorePct <= -MinScorePct && (!RequireHtf || htfDir == -1) && (!RequireSt || stState == -1) && (!BlockOpposedVol || volState != 1)) dir = -1;
    if (dir == 0) return;
