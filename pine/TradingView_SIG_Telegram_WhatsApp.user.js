@@ -213,9 +213,12 @@
     }
 
     // ─── رابط کاربری کوچک روی صفحه تریدینگ‌ویو ───
+    const oldBadge = document.getElementById('sl3-sig-badge');
+    if (oldBadge) oldBadge.remove();
     const badge = document.createElement('div');
-    badge.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:999999;background:#131722;color:#f0b90b;border:1px solid #f0b90b;border-radius:6px;padding:6px 10px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.5);user-select:none;';
-    badge.innerHTML = '🔔 <b>SIG Notifier:</b> در حال اتصال...';
+    badge.id = 'sl3-sig-badge';
+    badge.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:999999;background:#131722;color:#f0b90b;border:2px solid #f0b90b;border-radius:6px;padding:7px 12px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.65);user-select:none;';
+    badge.innerHTML = '🔔 <b>SIG Notifier:</b> آماده (کلیک برای تنظیمات تلگرام/واتساپ)';
     document.body.appendChild(badge);
 
     function openConfigModal() {
@@ -286,12 +289,17 @@
     }
 
     badge.onclick = openConfigModal;
+    if (!cfg.tgToken && !cfg.waPhone) {
+        openConfigModal();
+    }
+    console.log('%c✅ SIG Notifier فعال شد! پنجره تنظیمات و دکمه 🔔 در گوشه پایین-چپ چارت قرار گرفت.', 'color:#26a69a;font-weight:bold;font-size:14px;');
 
     // ─── حلقه بررسی زنده هر ۲ ثانیه ───
-    setInterval(() => {
+    if (window.__sl3SigTimer) clearInterval(window.__sl3SigTimer);
+    window.__sl3SigTimer = setInterval(() => {
         const sig = readSigFromPage();
         if (!sig) {
-            badge.innerHTML = '🔔 <b>SIG Notifier:</b> منتظر مقادیر لجند (31337)...';
+            badge.innerHTML = '🔔 <b>SIG Notifier:</b> آماده (کلیک برای تنظیمات)';
             return;
         }
         if (maxSeenSigId === null) {
