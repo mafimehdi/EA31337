@@ -133,30 +133,51 @@
 
     // ─── استخراج سیگنال SIG از Status Line (کلید 31337) روی صفحه تریدینگ‌ویو ───
     function readSigFromPage() {
-        // به دنبال آیتم لجند اندیکاتور SL3-AMD-VP یا کل متن لجند می‌گردیم
-        const legendItems = document.querySelectorAll('[data-name="legend-source-item"], [class*="sourcesWrapper"], [class*="legendMainSourceWrapper"]');
-        let texts = [];
-        if (legendItems.length > 0) {
-            legendItems.forEach((el) => texts.push(el.innerText || el.textContent || ''));
-        } else {
-            texts.push(document.body.innerText || '');
+        const bodyTxt = (document.body.innerText || '').replace(/[−–—]/g, '-').replace(/,/g, '');
+
+        // ۱) الگوی مستقیم سلول هدر جدول ENTRY CHECKLIST:
+        // SIG#12345 BUY @4650.00 SL:4638.00 TP:4674.00
+        const reHeader = /SIG#(\d+)\s+(BUY|SELL)\s+@(-?\d+(?:\.\d+)?)\s+SL:(-?\d+(?:\.\d+)?)\s+TP:(-?\d+(?:\.\d+)?)/;
+        const mh = bodyTxt.match(reHeader);
+        if (mh) {
+            return {
+                sigId: parseInt(mh[1], 10),
+                sigDir: mh[2] === 'BUY' ? 1 : -1,
+                entry: parseFloat(mh[3]),
+                sl: parseFloat(mh[4]),
+                tp: parseFloat(mh[5]),
+            };
         }
 
-        for (const raw of texts) {
-            // نرمال‌سازی کاراکترهای منفی یونیکد تریدینگ‌ویو (जैसे − به -) و حذف کاما
-            const norm = raw.replace(/[−–—]/g, '-').replace(/,/g, '');
-            // الگوی کلید 31337 و ۵ عدد بعدی: SIG_KEY(31337) SIG_ID SIG_DIR SIG_ENTRY SIG_SL SIG_TP
-            const re = /\b31337\b[^0-9-]*(-?\d+)[^0-9-]*(-?1|0)[^0-9-]*(-?\d+(?:\.\d+)?)[^0-9-]*(-?\d+(?:\.\d+)?)[^0-9-]*(-?\d+(?:\.\d+)?)/;
-            const m = norm.match(re);
-            if (m) {
-                const sigId = parseInt(m[1], 10);
-                const sigDir = parseInt(m[2], 10);
-                const entry = parseFloat(m[3]);
-                const sl = parseFloat(m[4]);
-                const tp = parseFloat(m[5]);
-                if (!isNaN(sigId) && sigId >= 0) {
-                    return { sigId, sigDir, entry, sl, tp };
-                }
+        // ۲) الگوی ردیف RESULT جدول ENTRY CHECKLIST:
+        // BUY allowed at 4650.00 · SL 4638.00 · TP 4674.00
+        const reRes = /(BUY|SELL)\s+allowed\s+at\s+(-?\d+(?:\.\d+)?)\s*·\s*SL\s+(-?\d+(?:\.\d+)?)\s*·\s*TP\s+(-?\d+(?:\.\d+)?)/;
+        const mr = bodyTxt.match(reRes);
+        if (mr) {
+            const e = parseFloat(mr[2]);
+            const s = parseFloat(mr[3]);
+            const t = parseFloat(mr[4]);
+            const sigId = Math.round(e * 100) * 10000 + Math.round(s * 100);
+            return {
+                sigId,
+                sigDir: mr[1] === 'BUY' ? 1 : -1,
+                entry: e,
+                sl: s,
+                tp: t,
+            };
+        }
+
+        // ۳) الگوی کلید 31337 در لجند (در صورت وجود)
+        const re31337 = /\b31337\b[^0-9-]*(-?\d+)[^0-9-]*(-?1|0)[^0-9-]*(-?\d+(?:\.\d+)?)[^0-9-]*(-?\d+(?:\.\d+)?)[^0-9-]*(-?\d+(?:\.\d+)?)/;
+        const m3 = bodyTxt.match(re31337);
+        if (m3) {
+            const sigId = parseInt(m3[1], 10);
+            const sigDir = parseInt(m3[2], 10);
+            const entry = parseFloat(m3[3]);
+            const sl = parseFloat(m3[4]);
+            const tp = parseFloat(m3[5]);
+            if (!isNaN(sigId) && sigId >= 0) {
+                return { sigId, sigDir, entry, sl, tp };
             }
         }
         return null;

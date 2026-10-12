@@ -1,8 +1,6 @@
 //@version=5
-// This Pine Script™ code is subject to the terms of the MIT License.
-// Swing Layer-3 + AMD (Power of 3) + Volume Profile + SuperTrend — Analytical Dashboard
-// Each module works independently; its own verdict is shown in the table.
-// A weighted confluence score produces Entry / Stop / Targets / Exit suggestions.
+// This Pine Script code is subject to the terms of the MIT License.
+// Swing Layer-3 + AMD (Power of 3) + Volume Profile + SuperTrend - Analytical Dashboard
 indicator("Swing L3 + AMD + VP + SuperTrend [Dashboard]", shorttitle="SL3-AMD-VP", overlay=true,
      max_bars_back=1500, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
@@ -651,17 +649,20 @@ plot(showST and stDir < 0 ? stLine : na, "SuperTrend Up", color=cBull, style=plo
 plot(showST and stDir > 0 ? stLine : na, "SuperTrend Down", color=cBear, style=plot.style_linebr, linewidth=2)
 
 // ═════════════════════════ ⑤ VOLUME CONFIRMATION ═════════════════════════
-f_vol() =>
-    _rv = nz(volume) / math.max(ta.sma(nz(volume), rvolLen), 1e-10)
-    _sv = close > open ? nz(volume) : close < open ? -nz(volume) : 0.0
-    _vd = math.sum(_sv, volN)
-    _vs = math.sum(nz(volume), volN)
-    _rvN = _vs / math.max(ta.sma(nz(volume), rvolLen) * volN, 1e-10)
-    _dp = _vs > 0 ? _vd / _vs : 0.0
-    _st = volMode == "Single bar" ? (_rv >= rvolThr ? (close > open ? 1 : close < open ? -1 : 0) : 0) : (_rvN >= rvolThr and math.abs(_dp) >= 0.3 ? (_dp > 0 ? 1 : -1) : 0)
-    _tx = volMode == "Single bar" ? "RVOL " + str.tostring(_rv, "#.##") + (_rv >= rvolThr ? (close > open ? " buyers" : " sellers") : " (weak)") : "RVOL" + str.tostring(volN) + " " + str.tostring(_rvN, "#.##") + " | Δ " + str.tostring(_dp * 100, "#") + "%" + (_st == 0 ? " (weak)" : _st > 0 ? " buyers" : " sellers")
-    [_rv, _st, _tx]
-[rvol, volState, volTxt] = f_vol()
+rvol = nz(volume) / math.max(ta.sma(nz(volume), rvolLen), 1e-10)
+sgnVol = close > open ? nz(volume) : close < open ? -nz(volume) : 0.0
+volDelta = math.sum(sgnVol, volN)
+volSumN  = math.sum(nz(volume), volN)
+rvolN    = volSumN / math.max(ta.sma(nz(volume), rvolLen) * volN, 1e-10)
+deltaPct = volSumN > 0 ? volDelta / volSumN : 0.0
+int volState = 0
+string volTxt = ""
+if volMode == "Single bar"
+    volState := rvol >= rvolThr ? (close > open ? 1 : close < open ? -1 : 0) : 0
+    volTxt := "RVOL " + str.tostring(rvol, "#.##") + (rvol >= rvolThr ? (close > open ? " buyers" : " sellers") : " (weak)")
+else
+    volState := rvolN >= rvolThr and math.abs(deltaPct) >= 0.3 ? (deltaPct > 0 ? 1 : -1) : 0
+    volTxt := "RVOL" + str.tostring(volN) + " " + str.tostring(rvolN, "#.##") + " | Δ " + str.tostring(deltaPct * 100, "#") + "%" + (volState == 0 ? " (weak)" : volState > 0 ? " buyers" : " sellers")
 
 // ═════════════════════════ ⑦ ORDER BLOCKS ═════════════════════════
 type Zone
@@ -796,9 +797,73 @@ if array.size(zones) > 0
 
 // ═════════════════════════ CONFLUENCE & TRADE ENGINE ═════════════════════════
 // ═════════════════════════ ⑧ INSTITUTIONAL FOOTPRINTS (proxies) ═════════════════════════
+// 1) real exchange volume (CME futures) — used for markers only (may be delayed on the live bar)
 gcVol = request.security(gcSym, timeframe.period, volume, ignore_invalid_symbol=true, lookahead=barmerge.lookahead_off)
+gcAvg = ta.sma(gcVol, rvolLen)
+gcRel = gcAvg > 0 ? gcVol / gcAvg : na
+heavy = instOn and not na(gcRel) and gcRel >= gcSpike
+rngI = math.max(high - low, syminfo.mintick)
+absorb = heavy and math.abs(close - open) / rngI <= absBody
+// 2) liquidity pools: previous day high/low, Asia range, equal highs/lows (L1 swings)
 pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
 pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+var float eqH = na
+var float eqL = na
+var float prevPH = na
+var float prevPL = na
+if not na(ph)
+    if not na(prevPH) and math.abs(ph - prevPH) <= atr14 * eqTolAtr
+        eqH := math.max(ph, prevPH)
+    prevPH := ph
+if not na(pl)
+    if not na(prevPL) and math.abs(pl - prevPL) <= atr14 * eqTolAtr
+        eqL := math.min(pl, prevPL)
+    prevPL := pl
+asiaH = postAcc ? accHi : na
+asiaL = postAcc ? accLo : na
+f_sweepHi(float lvl) => not na(lvl) and high > lvl + atr14 * 0.05 and close < lvl
+f_sweepLo(float lvl) => not na(lvl) and low < lvl - atr14 * 0.05 and close > lvl
+var int lastSwB = na
+var int lastSwS = na
+upW = (high - math.max(open, close)) / math.max(high - low, syminfo.mintick)
+dnW = (math.min(open, close) - low) / math.max(high - low, syminfo.mintick)
+// real sweep = clear rejection wick (>= 40%) or heavy futures volume; max one per side per 8 bars
+sweepBear = instOn and (f_sweepHi(pdh) or f_sweepHi(asiaH) or f_sweepHi(eqH)) and (upW >= 0.4 or heavy) and bar_index - nz(lastSwS, -1000) > 8
+sweepBull = instOn and (f_sweepLo(pdl) or f_sweepLo(asiaL) or f_sweepLo(eqL)) and (dnW >= 0.4 or heavy) and bar_index - nz(lastSwB, -1000) > 8
+if sweepBear
+    lastSwS := bar_index
+if sweepBull
+    lastSwB := bar_index
+poolTxt = sweepBear ? (f_sweepHi(pdh) ? "PDH" : f_sweepHi(asiaH) ? "Asia high" : "equal highs") : sweepBull ? (f_sweepLo(pdl) ? "PDL" : f_sweepLo(asiaL) ? "Asia low" : "equal lows") : ""
+if sweepBear and f_sweepHi(eqH)
+    eqH := na
+if sweepBull and f_sweepLo(eqL)
+    eqL := na
+lo20 = ta.lowest(low, 20)[1]
+hi20 = ta.highest(high, 20)[1]
+// 3) signal: sweep (+ heavy volume = stronger); absorption at an extreme = reversal hint
+var int   instDir = 0
+var int   instBar = na
+var string instTxt = "—"
+if sweepBull and not sweepBear
+    instDir := 1
+    instBar := bar_index
+    instTxt := "Sweep of " + poolTxt + (heavy ? " + " + str.tostring(gcRel, "#.#") + "× GC vol" : "") + " → long bias"
+else if sweepBear and not sweepBull
+    instDir := -1
+    instBar := bar_index
+    instTxt := "Sweep of " + poolTxt + (heavy ? " + " + str.tostring(gcRel, "#.#") + "× GC vol" : "") + " → short bias"
+else if absorb and close > open and low <= lo20
+    instDir := 1
+    instBar := bar_index
+    instTxt := "Absorption at low (" + str.tostring(gcRel, "#.#") + "× GC vol) → long bias"
+else if absorb and close < open and high >= hi20
+    instDir := -1
+    instBar := bar_index
+    instTxt := "Absorption at high (" + str.tostring(gcRel, "#.#") + "× GC vol) → short bias"
+instActive = instOn and instDir != 0 and bar_index - nz(instBar, -100000) <= instHold
+instState = instActive ? instDir : 0
+// 4) COT (weekly)
 cotL = cotOn ? request.security(cotLong, "W", close, ignore_invalid_symbol=true) : na
 cotS = cotOn ? request.security(cotShort, "W", close, ignore_invalid_symbol=true) : na
 cotLc = cotOn ? request.security(cotLong, "W", close - close[cotWeeks], ignore_invalid_symbol=true) : na
@@ -807,72 +872,11 @@ ccL = cotOn ? request.security(cotCL, "W", close, ignore_invalid_symbol=true) : 
 ccS = cotOn ? request.security(cotCS, "W", close, ignore_invalid_symbol=true) : na
 ccLc = cotOn ? request.security(cotCL, "W", close - close[cotWeeks], ignore_invalid_symbol=true) : na
 ccSc = cotOn ? request.security(cotCS, "W", close - close[cotWeeks], ignore_invalid_symbol=true) : na
-f_sweepHi(float lvl) => not na(lvl) and high > lvl + atr14 * 0.05 and close < lvl
-f_sweepLo(float lvl) => not na(lvl) and low < lvl - atr14 * 0.05 and close > lvl
-f_inst() =>
-    _gcAvg = ta.sma(gcVol, rvolLen)
-    _gcR = _gcAvg > 0 ? gcVol / _gcAvg : na
-    _hvy = instOn and not na(_gcR) and _gcR >= gcSpike
-    _rngI = math.max(high - low, syminfo.mintick)
-    _absB = _hvy and math.abs(close - open) / _rngI <= absBody
-    var float _eqH = na
-    var float _eqL = na
-    var float _prevPH = na
-    var float _prevPL = na
-    if not na(ph)
-        if not na(_prevPH) and math.abs(ph - _prevPH) <= atr14 * eqTolAtr
-            _eqH := math.max(ph, _prevPH)
-        _prevPH := ph
-    if not na(pl)
-        if not na(_prevPL) and math.abs(pl - _prevPL) <= atr14 * eqTolAtr
-            _eqL := math.min(pl, _prevPL)
-        _prevPL := pl
-    _asiaH = postAcc ? accHi : na
-    _asiaL = postAcc ? accLo : na
-    var int _lastSwB = na
-    var int _lastSwS = na
-    _upW = (high - math.max(open, close)) / _rngI
-    _dnW = (math.min(open, close) - low) / _rngI
-    _swBear = instOn and (f_sweepHi(pdh) or f_sweepHi(_asiaH) or f_sweepHi(_eqH)) and (_upW >= 0.4 or _hvy) and bar_index - nz(_lastSwS, -1000) > 8
-    _swBull = instOn and (f_sweepLo(pdl) or f_sweepLo(_asiaL) or f_sweepLo(_eqL)) and (_dnW >= 0.4 or _hvy) and bar_index - nz(_lastSwB, -1000) > 8
-    if _swBear
-        _lastSwS := bar_index
-    if _swBull
-        _lastSwB := bar_index
-    _poolTxt = _swBear ? (f_sweepHi(pdh) ? "PDH" : f_sweepHi(_asiaH) ? "Asia high" : "equal highs") : _swBull ? (f_sweepLo(pdl) ? "PDL" : f_sweepLo(_asiaL) ? "Asia low" : "equal lows") : ""
-    if _swBear and f_sweepHi(_eqH)
-        _eqH := na
-    if _swBull and f_sweepLo(_eqL)
-        _eqL := na
-    _lo20 = ta.lowest(low, 20)[1]
-    _hi20 = ta.highest(high, 20)[1]
-    var int   _instDir = 0
-    var int   _instBar = na
-    var string _iTxt = "—"
-    if _swBull and not _swBear
-        _instDir := 1
-        _instBar := bar_index
-        _iTxt := "Sweep of " + _poolTxt + (_hvy ? " + " + str.tostring(_gcR, "#.#") + "× GC vol" : "") + " → long bias"
-    else if _swBear and not _swBull
-        _instDir := -1
-        _instBar := bar_index
-        _iTxt := "Sweep of " + _poolTxt + (_hvy ? " + " + str.tostring(_gcR, "#.#") + "× GC vol" : "") + " → short bias"
-    else if _absB and close > open and low <= _lo20
-        _instDir := 1
-        _instBar := bar_index
-        _iTxt := "Absorption at low (" + str.tostring(_gcR, "#.#") + "× GC vol) → long bias"
-    else if _absB and close < open and high >= _hi20
-        _instDir := -1
-        _instBar := bar_index
-        _iTxt := "Absorption at high (" + str.tostring(_gcR, "#.#") + "× GC vol) → short bias"
-    _iAct = instOn and _instDir != 0 and bar_index - nz(_instBar, -100000) <= instHold
-    _iSt = _iAct ? _instDir : 0
-    _useMM = not na(cotL - cotS)
-    _cotNet = _useMM ? cotL - cotS : ccL - ccS
-    _cotChg = _useMM ? cotLc - cotSc : ccLc - ccSc
-    _cTxt = na(_cotNet) ? "COT n/a" : "COT " + (_useMM ? "MM" : "Comm") + " net " + str.tostring(_cotNet / 1000, "#.#") + "k (" + (_cotChg >= 0 ? "+" : "") + str.tostring(_cotChg / 1000, "#.#") + "k/" + str.tostring(cotWeeks) + "w " + (_cotChg >= 0 ? "↑" : "↓") + ")"
-    [_gcR, _hvy, _absB, _eqH, _eqL, _swBull, _swBear, _iTxt, _iAct, _iSt, _cTxt]
-[gcRel, heavy, absorb, eqH, eqL, sweepBull, sweepBear, instTxt, instActive, instState, cotTxt] = f_inst()
+useMM = not na(cotL - cotS)
+cotNet = useMM ? cotL - cotS : ccL - ccS
+cotChg = useMM ? cotLc - cotSc : ccLc - ccSc
+// commercials are hedgers: their net SHORT shrinking (net rising) is bullish for price, like MM net rising
+cotTxt = na(cotNet) ? "COT n/a" : "COT " + (useMM ? "MM" : "Comm") + " net " + str.tostring(cotNet / 1000, "#.#") + "k (" + (cotChg >= 0 ? "+" : "") + str.tostring(cotChg / 1000, "#.#") + "k/" + str.tostring(cotWeeks) + "w " + (cotChg >= 0 ? "↑" : "↓") + ")"
 plotshape(showInst and sweepBull, "Liquidity sweep (bull)", shape.labelup, location.belowbar, color.new(color.teal, 20), text="Sweep", textcolor=color.white, size=size.tiny)
 plotshape(showInst and sweepBear, "Liquidity sweep (bear)", shape.labeldown, location.abovebar, color.new(color.maroon, 20), text="Sweep", textcolor=color.white, size=size.tiny)
 plotshape(showInst and heavy and not absorb and close >= open, "Heavy futures volume (bull)", shape.labelup, location.belowbar, cBull, text="Vol", textcolor=color.white, size=size.tiny)
@@ -1724,22 +1728,8 @@ if barstate.islast and showScen and showScenTbl
 // ═════════════════════════ ANALYSIS BOX (Persian trader read of the current chart) ═════════════════════════
 anaP = anaPos == "Bottom Left" ? position.bottom_left : anaPos == "Top Left" ? position.top_left : anaPos == "Middle Left" ? position.middle_left : anaPos == "Bottom Center" ? position.bottom_center : position.top_center
 var table ana = table.new(anaP, 1, 1, bgcolor=color.new(#1e222d, 0), border_width=0, frame_color=color.new(color.aqua, 40), frame_width=1)
-anaRow(int r, string k, string v, color c) =>
-    table.cell(ana, 0, r, k, text_color=color.aqua, text_size=szT, text_halign=text.align_right)
-    table.cell(ana, 1, r, v, text_color=c, text_size=szT, text_halign=text.align_right)
-var string anaWhy = ""
 var string aNote = ""
-var string aV0 = ""
-var string aV1 = ""
-var string aV2 = ""
-var string aV3 = ""
-var string aV4 = ""
-var string aV5 = ""
-var string aV6 = ""
-var string aV7 = ""
-var color  aCT = color.gray
-anaGo = showAna and barstate.isconfirmed and bar_index >= last_bar_index - 300 and (na(anaRefPx) or anaHour or anaEvt != "")
-if anaGo
+f_buildAnaNote() =>
     bD = structState != 0 ? structState : stState
     av = array.new_float()
     an = array.new_string()
@@ -1765,56 +1755,37 @@ if anaGo
     [r2, r2n] = f_above(av, an, nz(r1, close) + atr14 * 0.3)
     [s1, s1n] = f_below(av, an, close - atr14 * 0.1)
     [s2, s2n] = f_below(av, an, nz(s1, close) - atr14 * 0.3)
-    trendTxt = (bD == 1 ? "صعودی" : bD == -1 ? "نزولی" : "بدون جهت") + " — HTF " + (htfDir == 1 ? "صعودی" : htfDir == -1 ? "نزولی" : "خنثی") + "، SuperTrend " + (stState == 1 ? "صعودی" : "نزولی") + "، " + (vpState == 1 ? "بالای VAH" : vpState == -1 ? "زیر VAL" : "داخل ناحیه ارزش") + "، امتیاز " + str.tostring(scorePct, "#") + "٪"
-    nowTxt = bD == -1 and close - anaLo > atr14 * 1.0 ? "برگشت اصلاحی از کف " + fmt(anaLo) + " (هنوز روند صعودی نیست)" : bD == 1 and anaHi - close > atr14 * 1.0 ? "اصلاح از سقف " + fmt(anaHi) + " (هنوز روند نزولی نیست)" : bD == -1 ? "ادامه حرکت نزولی، نزدیک کف " + fmt(anaLo) : bD == 1 ? "ادامه حرکت صعودی، نزدیک سقف " + fmt(anaHi) : "نوسان در رنج"
-    resTxt = (na(r1) ? "—" : fmt(r1) + " (" + r1n + ")") + (na(r2) ? "" : "  ←  " + fmt(r2) + " (" + r2n + ")")
-    supTxt = (na(s1) ? "—" : fmt(s1) + " (" + s1n + ")") + (na(s2) ? "" : "  ←  " + fmt(s2) + " (" + s2n + ")")
-    invLvl = bD == -1 ? htfH : bD == 1 ? htfL : na
-    mainTxt = bD == -1 ? "فروش در برگشت به " + fmt(r1) + (na(r2) ? "" : " تا " + fmt(r2)) + " با کندل نزولی؛ هدف " + fmt(s1) + (na(s2) ? "" : " سپس " + fmt(s2)) : bD == 1 ? "خرید در پولبک به " + fmt(s1) + (na(s2) ? "" : " تا " + fmt(s2)) + " با کندل صعودی؛ هدف " + fmt(r1) + (na(r2) ? "" : " سپس " + fmt(r2)) : "صبر تا شکست یکی از دو طرف رنج " + fmt(s1) + " / " + fmt(r1)
-    altTxt = bD == -1 ? "برگشت صعودی فقط با بسته شدن بالای SuperTrend " + fmt(stLine) + " و کف بالاتر بالای " + fmt(s1) + " ← خرید نصف حجم" : bD == 1 ? "برگشت نزولی فقط با بسته شدن زیر SuperTrend " + fmt(stLine) + " و سقف پایین‌تر زیر " + fmt(r1) + " ← فروش نصف حجم" : "—"
-    invTxt = na(invLvl) ? "—" : "بسته شدن ۱۵ دقیقه " + (bD == -1 ? "بالای " : "زیر ") + fmt(invLvl) + (bD == -1 ? " (سقف HTF)" : " (کف HTF)") + " = دید " + (bD == -1 ? "نزولی" : "صعودی") + " باطل"
-    actTxt = "بین " + fmt(s1) + " و " + fmt(r1) + " وارد نشو؛ هشدار قیمت: " + fmt(r1) + " / " + fmt(s1) + " / SuperTrend " + fmt(stLine)
-    cT = bD == 1 ? cBull : bD == -1 ? cBear : cNeu
-    anaRefPx := close
-    anaWhy := anaEvt != "" ? anaEvt : "hourly"
-    aCT := cT
-    aV0 := "قیمت " + fmt(close) + "  ·  ATR " + str.tostring(atr14, "#.##") + "  ·  به‌روز: " + str.format_time(time_close, "HH:mm", "Asia/Tehran") + " (" + (anaWhy == "hourly" ? "ساعتی" : anaWhy == "SuperTrend flip" ? "تغییر SuperTrend" : anaWhy == "structure change" ? "تغییر ساختار" : anaWhy == "TL break" ? "شکست خط روند" : "حرکت بیش از ۲ ATR") + ")"
-    aV1 := trendTxt
-    aV2 := nowTxt
-    aV3 := resTxt
-    aV4 := supTxt
-    aV5 := mainTxt
-    aV6 := altTxt
-    aV7 := invTxt + "  |  " + actTxt
     trSimple = bD == 1 ? "بازار صعودی است" : bD == -1 ? "بازار نزولی است" : "بازار فعلاً جهت مشخصی ندارد"
     nowSimple = bD == -1 and close - anaLo > atr14 ? " و قیمت از کف " + fmt(anaLo) + " کمی برگشته." + "\n‏" + "این برگشت هنوز به معنی صعودی شدن نیست." : bD == 1 and anaHi - close > atr14 ? " و قیمت از سقف " + fmt(anaHi) + " کمی اصلاح کرده." + "\n‏" + "این اصلاح هنوز به معنی نزولی شدن نیست." : bD == -1 ? " و فشار فروش ادامه دارد." : bD == 1 ? " و فشار خرید ادامه دارد." : " و قیمت در رنج نوسان می‌کند."
     lvR = na(r1) ? "مقاومت مشخصی بالای قیمت نیست" : "مقاومت بعدی " + fmt(r1) + (na(r2) ? "" : " و بعد " + fmt(r2))
     lvS = na(s1) ? "حمایت مشخصی زیر قیمت نیست" : "حمایت بعدی " + fmt(s1) + (na(s2) ? "" : " و بعد " + fmt(s2))
     rl = "‏"
     nl = "\n" + rl
-    pB = pBias
-    wS = pB == -1
+    wS = pBias == -1
     aEnt = pSt == 2 ? "خرید پلن فعال است از " + fmt(actE) : pSt == 3 ? "فروش پلن فعال است از " + fmt(actE) : wS ? (sOff ? "سمت فروش از دست رفته؛ صبر کنید" : "فروش در " + fmt(sE)) : (bOff ? "سمت خرید از دست رفته؛ صبر کنید" : "خرید در " + fmt(bE))
     aCond = pSt >= 2 ? "" : wS and not sOff ? "شرط: قیمت به " + fmt(sE) + " برسد و یک کندل نزولی زیر آن بسته شود." : not wS and not bOff ? "شرط: قیمت به " + fmt(bE) + " برسد و یک کندل صعودی بالای آن بسته شود." : ""
     aTgt = pSt == 2 or (pSt == 1 and not wS and not bOff) ? "حد ضرر " + fmt(bSL) + "  ·  هدف " + fmt(bTP) : pSt == 3 or (pSt == 1 and wS and not sOff) ? "حد ضرر " + fmt(sSL) + "  ·  هدف " + fmt(sTP) : ""
     aAlt = pSt != 1 ? "" : wS and not bOff ? "خرید با نصف حجم در " + fmt(bE) + " (کندل صعودی)، حد ضرر " + fmt(bSL) + "، هدف " + fmt(bTP) + "." : not wS and not sOff ? "فروش با نصف حجم در " + fmt(sE) + " (کندل نزولی)، حد ضرر " + fmt(sSL) + "، هدف " + fmt(sTP) + "." : ""
     aInv = pSt == 1 ? "اگر کندل ۱۵ دقیقه " + (wS ? "بالای " + fmt(sSL) : "زیر " + fmt(bSL)) + " بسته شود، این تحلیل باطل است." : ""
     aWait = pSt == 1 ? "بین " + fmt(bE) + " و " + fmt(sE) + " وارد نشوید (همان سطوح جدول سناریو)." : ""
-    aNote := rl + "یادداشت تحلیل  ·  ساعت " + str.format_time(time_close, "HH:mm", "Asia/Tehran") + nl + nl + trSimple + nowSimple + nl + lvR + "." + nl + lvS + "." + nl + nl + "پیشنهاد: " + aEnt + "." + (aCond == "" ? "" : nl + aCond) + (aTgt == "" ? "" : nl + aTgt + ".") + (aAlt == "" ? "" : nl + nl + "در غیر این صورت: " + aAlt) + (aInv == "" ? "" : nl + aInv) + (aWait == "" ? "" : nl + aWait)
+    rl + "یادداشت تحلیل  ·  ساعت " + str.format_time(time_close, "HH:mm", "Asia/Tehran") + nl + nl + trSimple + nowSimple + nl + lvR + "." + nl + lvS + "." + nl + nl + "پیشنهاد: " + aEnt + "." + (aCond == "" ? "" : nl + aCond) + (aTgt == "" ? "" : nl + aTgt + ".") + (aAlt == "" ? "" : nl + nl + "در غیر این صورت: " + aAlt) + (aInv == "" ? "" : nl + aInv) + (aWait == "" ? "" : nl + aWait)
+anaGo = showAna and barstate.isconfirmed and bar_index >= last_bar_index - 300 and (na(anaRefPx) or anaHour or anaEvt != "")
+if anaGo
+    anaRefPx := close
+    aNote := f_buildAnaNote()
 if barstate.islast and showAna
     table.cell(ana, 0, 0, aNote, text_color=color.new(color.white, 5), text_size=szT, text_halign=text.align_right, text_valign=text.align_top)
 
 // ═════════════════════════ PIN BARS (yellow candles) ═════════════════════════
-f_pin() =>
-    _pr = high - low
-    _uw = _pr > 0 ? (high - math.max(open, close)) / _pr * 100 : 0
-    _dw = _pr > 0 ? (math.min(open, close) - low) / _pr * 100 : 0
-    _bd = _pr > 0 ? math.abs(close - open) / _pr * 100 : 100
-    _ok = _pr >= atr14 * pinMinAtr and _bd <= pinBody
-    _pLo = ta.lowest(low, pinLook)[1]
-    _pHi = ta.highest(high, pinLook)[1]
-    [_ok and _dw >= pinWick and _uw <= pinOpp and (not pinProt or low < _pLo), _ok and _uw >= pinWick and _dw <= pinOpp and (not pinProt or high > _pHi)]
-[pinBull, pinBear] = f_pin()
+pinRng = high - low
+pinUpW = pinRng > 0 ? (high - math.max(open, close)) / pinRng * 100 : 0
+pinDnW = pinRng > 0 ? (math.min(open, close) - low) / pinRng * 100 : 0
+pinBd  = pinRng > 0 ? math.abs(close - open) / pinRng * 100 : 100
+pinOk  = pinRng >= atr14 * pinMinAtr and pinBd <= pinBody
+pinPrLo = ta.lowest(low, pinLook)[1]
+pinPrHi = ta.highest(high, pinLook)[1]
+pinBull = pinOk and pinDnW >= pinWick and pinUpW <= pinOpp and (not pinProt or low < pinPrLo)
+pinBear = pinOk and pinUpW >= pinWick and pinDnW <= pinOpp and (not pinProt or high > pinPrHi)
 barcolor(showPin and (pinBull or pinBear) ? color.yellow : na, title="Pin bar")
 plotshape(showPin and pinBull, "Bullish pin bar ▲", shape.labelup, location.belowbar, color.yellow, text="Pin▲", textcolor=color.black, size=size.tiny)
 plotshape(showPin and pinBear, "Bearish pin bar ▼", shape.labeldown, location.abovebar, color.yellow, text="Pin▼", textcolor=color.black, size=size.tiny)
@@ -2007,18 +1978,7 @@ var bool ckO2 = false
 var bool ckO3 = false
 var bool ckO4 = false
 var bool ckGo = false
-bool goNow = false
-int goDir = 0
-float goSL = na
-float goTP = na
-bool goPin = false
-if showChk and barstate.isconfirmed
-    d = chkDir
-    locOk = d == 1 ? locLoOk : d == -1 ? locHiOk : false
-    trgOk = d == 1 ? trgLoOk : d == -1 ? trgHiOk : false
-    // 4) stop behind the swept extreme / last 4 bars, target = next opposite liquidity
-    ext = d == 1 ? (locLoOk ? math.min(nz(locLoExt, low), chkLo4) : chkLo4) : (locHiOk ? math.max(nz(locHiExt, high), chkHi4) : chkHi4)
-    slC = d == 1 ? ext - atr14 * 0.25 : ext + atr14 * 0.25
+f_chkTgt(int d, float slC) =>
     tv = array.new_float()
     tn = array.new_string()
     if d == 1
@@ -2036,7 +1996,6 @@ if showChk and barstate.isconfirmed
         f_lvAdd(tv, tn, vpVAL, "VAL")
         f_lvAdd(tv, tn, pdl, "PDL")
     risk = math.abs(close - slC)
-    // nearest target first; if it gives < min R:R, walk to the next one (up to 4 steps)
     float tgt = na
     string tgtN = "—"
     float pxRef = d == 1 ? close + atr14 * 0.3 : close - atr14 * 0.3
@@ -2053,6 +2012,19 @@ if showChk and barstate.isconfirmed
             if math.abs(tX - close) / risk >= chkMinRR
                 break
             pxRef := d == 1 ? tX + syminfo.mintick : tX - syminfo.mintick
+    [tgt, tgtN]
+bool goNow = false
+int goDir = 0
+float goSL = na
+float goTP = na
+if showChk and barstate.isconfirmed
+    d = chkDir
+    locOk = d == 1 ? locLoOk : d == -1 ? locHiOk : false
+    trgOk = d == 1 ? trgLoOk : d == -1 ? trgHiOk : false
+    ext = d == 1 ? (locLoOk ? math.min(nz(locLoExt, low), chkLo4) : chkLo4) : (locHiOk ? math.max(nz(locHiExt, high), chkHi4) : chkHi4)
+    slC = d == 1 ? ext - atr14 * 0.25 : ext + atr14 * 0.25
+    [tgt, tgtN] = f_chkTgt(d, slC)
+    risk = math.abs(close - slC)
     rr = d == 0 or na(tgt) or risk <= 0 ? na : math.abs(tgt - close) / risk
     rrOk = not na(rr) and rr >= chkMinRR
     allOk = d != 0 and locOk and trgOk and rrOk
@@ -2072,7 +2044,6 @@ if showChk and barstate.isconfirmed
     goDir := d
     goSL := slC
     goTP := tgt
-    goPin := d == 1 ? str.contains(trgLoTxt, "pin") : str.contains(trgHiTxt, "pin")
 // ── statistics: every new SIG is simulated until SL or TP (same-bar hit = loss); up to chkMaxOpen at once, extra SIGs are not recorded
 var int   stT0 = time
 var int   nAll = 0
@@ -2088,7 +2059,6 @@ var sgE   = array.new_float()
 var sgSL  = array.new_float()
 var sgTP  = array.new_float()
 var sgLbl = array.new_label()
-var ntf   = array.from(0.0, 0.0, float(na), float(na), float(na))
 if barstate.isconfirmed and array.size(sgDir) > 0
     for i = array.size(sgDir) - 1 to 0
         dI = array.get(sgDir, i)
@@ -2127,20 +2097,13 @@ if barstate.isconfirmed and goNew and not na(goTP) and not na(goSL) and array.si
     array.push(sgSL, goSL)
     array.push(sgTP, goTP)
     array.push(sgLbl, label.new(bar_index, goDir == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, goDir == 1 ? "SIG▲" : "SIG▼", style=goDir == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.yellow, 20), textcolor=color.black, tooltip="SIG  entry " + str.tostring(close, format.mintick) + "  SL " + str.tostring(goSL, format.mintick) + "  TP " + str.tostring(goTP, format.mintick) + "  |  " + (goDir == 1 ? trgLoTxt : trgHiTxt)))
-    array.set(ntf, 0, array.get(ntf, 0) + 1)
-    array.set(ntf, 1, goDir)
-    array.set(ntf, 2, close)
-    array.set(ntf, 3, goSL)
-    array.set(ntf, 4, goTP)
 f_stTxt(int n, int w, float r) => n == 0 ? "no trades yet" : str.tostring(n) + " trades  ·  win " + str.tostring(100.0 * w / n, "#") + "%  ·  avg " + str.tostring(r / n, "#.##") + "R  ·  total " + str.tostring(r, "#.#") + "R"
-if barstate.islast and showChk
-    table.cell(ck, 0, 7, "SIG STATS since " + str.format_time(stT0, "yyyy-MM-dd", "Asia/Tehran"), text_color=color.yellow, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 1, 7, f_stTxt(nAll, wAll, rAll) + "  ·  max DD " + str.tostring(ddR, "#.#") + "R  ·  $ net " + (usdW - usdL >= 0 ? "+" : "−") + str.tostring(math.abs(usdW - usdL), "#.#") + " (win +" + str.tostring(usdW, "#.#") + " / loss −" + str.tostring(usdL, "#.#") + ", per 1 oz)" + (array.size(sgDir) > 0 ? "  ·  " + str.tostring(array.size(sgDir)) + " open" : ""), text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 7, nAll == 0 ? "—" : rAll > 0 ? "+" : "−", bgcolor=nAll == 0 ? color.new(color.gray, 50) : rAll > 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
 f_draw2121() =>
+    sN = array.size(sgDir)
+    sBridge = sN > 0 ? "SIG#" + str.tostring(label.get_x(array.get(sgLbl, sN - 1))) + " " + (array.get(sgDir, sN - 1) == 1 ? "BUY @" : "SELL @") + fmt(array.get(sgE, sN - 1)) + " SL:" + fmt(array.get(sgSL, sN - 1)) + " TP:" + fmt(array.get(sgTP, sN - 1)) : ""
     table.cell(ck, 0, 0, "ENTRY CHECKLIST", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
     table.cell(ck, 1, 0, ckHead, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 0, array.get(ntf, 0) > 0 ? "SIG#" + str.tostring(array.get(ntf, 0), "#") : "", text_color=color.yellow, text_size=szT)
+    table.cell(ck, 2, 0, sBridge, text_color=color.aqua, text_size=szT)
     f_ck(1, "1  Direction", ckT1, ckO1, ckO1 ? "OK" : "NO")
     f_ck(2, "2  Location", ckT2, ckO2, ckO2 ? "OK" : "NO")
     f_ck(3, "3  Trigger", ckT3, ckO3, ckO3 ? "OK" : "NO")
@@ -2151,6 +2114,9 @@ f_draw2121() =>
     table.cell(ck, 0, 6, "RESULT", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
     table.cell(ck, 1, 6, ckRes, text_color=color.white, text_size=szT, text_halign=text.align_left)
     table.cell(ck, 2, 6, ckGo ? "GO" : "WAIT", bgcolor=ckGo ? color.new(cBull, 10) : color.new(cBear, 10), text_color=color.white, text_size=szT)
+    table.cell(ck, 0, 7, "SIG STATS since " + str.format_time(stT0, "yyyy-MM-dd", "Asia/Tehran"), text_color=color.yellow, text_size=szT, text_halign=text.align_left)
+    table.cell(ck, 1, 7, f_stTxt(nAll, wAll, rAll) + "  ·  max DD " + str.tostring(ddR, "#.#") + "R  ·  $ net " + (usdW - usdL >= 0 ? "+" : "−") + str.tostring(math.abs(usdW - usdL), "#.#") + " (win +" + str.tostring(usdW, "#.#") + " / loss −" + str.tostring(usdL, "#.#") + ", per 1 oz)" + (sN > 0 ? "  ·  " + str.tostring(sN) + " open" : ""), text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(ck, 2, 7, nAll == 0 ? "—" : rAll > 0 ? "+" : "−", bgcolor=nAll == 0 ? color.new(color.gray, 50) : rAll > 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
     0
 if barstate.islast and showChk
     f_draw2121()
@@ -2189,14 +2155,6 @@ var aMfe  = array.new_float()
 var aRes  = array.new_float()
 var aBar  = array.new_int()
 var aLbl  = array.new_label()
-var int   rvN = 0
-var int   rvW = 0
-var float rvR = 0.0
-var int   rvM = 0
-var int   rvH10 = 0
-var int   rvH20 = 0
-var int   rvH30 = 0
-var int   rvFar = 0
 f_rvTxt(int dd, float rs, float mf) => (dd == 1 ? "REV▲" : "REV▼") + (na(rs) ? "" : rs > 0 ? " +" + str.tostring(rs, "#.#") + "R" : " " + str.tostring(rs, "#.#") + "R") + "  MFE $" + str.tostring(mf, "#.#")
 f_rvCol(float rs) => nz(rs) > 0.05 ? color.new(cBull, 0) : nz(rs) < -0.05 ? color.new(cBear, 0) : color.new(color.gray, 20)
 f_rvDel(int i) =>
@@ -2211,7 +2169,7 @@ f_rvDel(int i) =>
     array.remove(aRes, i)
     array.remove(aBar, i)
     array.remove(aLbl, i)
-if barstate.isconfirmed and array.size(aDir) > 0
+f_draw2211() =>
     for i = array.size(aDir) - 1 to 0
         dI = array.get(aDir, i)
         eI = array.get(aE, i)
@@ -2243,30 +2201,23 @@ if barstate.isconfirmed and array.size(aDir) > 0
                 if not na(rs)
                     array.set(aRes, i, rs)
                     array.set(aDone, i, true)
-                    rvN += 1
-                    rvR += rs
-                    rvW += rs > 0 ? 1 : 0
                 else if revBe > 0 and mf >= revBe
                     array.set(aSL, i, dI == 1 ? math.max(slI, eI) : math.min(slI, eI))
             if not array.get(aDone, i) and bar_index - bI >= 96
                 rsT = (dI == 1 ? close - eI : eI - close) / rkI
                 array.set(aRes, i, rsT)
                 array.set(aDone, i, true)
-                rvN += 1
-                rvR += rsT
-                rvW += rsT > 0 ? 1 : 0
             rsI = array.get(aRes, i)
             if hitS or bar_index - bI >= 96
-                rvM += 1
-                rvH10 += mf >= 5 ? 1 : 0
-                rvH20 += mf >= 10 ? 1 : 0
-                rvH30 += mf >= 20 ? 1 : 0
                 label.set_text(lb, f_rvTxt(dI, rsI, mf))
                 label.set_color(lb, f_rvCol(rsI))
                 f_rvDel(i)
             else
                 label.set_text(lb, f_rvTxt(dI, rsI, mf))
-if showRev and (rvSigL or rvSigS)
+    0
+if barstate.isconfirmed and array.size(aDir) > 0
+    f_draw2211()
+f_draw2220() =>
     d = rvSigL ? 1 : -1
     big = high - low > atr14 * revBig
     e = big ? hl2 : close
@@ -2311,11 +2262,9 @@ if showRev and (rvSigL or rvSigS)
     ypos = d == 1 ? low - atr14 * 1.6 : high + atr14 * 1.6
     tipTxt = "REV: sweep " + (d == 1 ? "low" : "high") + " then " + ((d == 1 ? tlBrkUp : tlBrkDn) ? "TL" : "D") + (d == 1 ? "▲" : "▼") + "  entry " + str.tostring(e, format.mintick) + (big ? " (limit, big candle)" : "") + "  SL " + str.tostring(rvSlC, format.mintick) + "  TP " + (na(tpR) ? "none" : str.tostring(tpR, format.mintick) + " (" + tpN + ")  R:R " + str.tostring(math.abs(tpR - e) / math.max(rk, syminfo.mintick), "#.#"))
     if far
-        rvFar += 1
         if revShowLbl
             label.new(bar_index, ypos, d == 1 ? "REV▲ (no target)" : "REV▼ (no target)", style=d == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.gray, 30), textcolor=color.white, tooltip=tipTxt + "  — no liquidity target ≥ $" + str.tostring(revMinTp) + " with R:R ≥ " + str.tostring(revMinRR))
     else
-        // max simultaneous open REV trades: if full, the new signal is not recorded
         nOpen = 0
         if array.size(aDir) > 0
             for j = 0 to array.size(aDir) - 1
@@ -2326,11 +2275,6 @@ if showRev and (rvSigL or rvSigS)
             array.push(sgSL, rvSlC)
             array.push(sgTP, tpR)
             array.push(sgLbl, label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, d == 1 ? "SIG▲" : "SIG▼", style=d == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.yellow, 20), textcolor=color.black, tooltip="SIG (REV)  " + tipTxt))
-            array.set(ntf, 0, array.get(ntf, 0) + 1)
-            array.set(ntf, 1, d)
-            array.set(ntf, 2, e)
-            array.set(ntf, 3, rvSlC)
-            array.set(ntf, 4, tpR)
         if nOpen < revMax
             array.push(aDir, d)
             array.push(aPend, big)
@@ -2343,13 +2287,6 @@ if showRev and (rvSigL or rvSigS)
             array.push(aRes, na)
             array.push(aBar, bar_index)
             array.push(aLbl, not revShowLbl ? na : label.new(bar_index, ypos, d == 1 ? "REV▲" : "REV▼", style=d == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.orange, 10), textcolor=color.black, tooltip=tipTxt))
-rvOpenN = 0
-if barstate.islast and array.size(aDone) > 0
-    for j = 0 to array.size(aDone) - 1
-        rvOpenN += array.get(aDone, j) ? 0 : 1
-plot(31337, "SIG_KEY", color=color.yellow, editable=false, display=display.status_line + display.data_window, precision=0)
-plot(array.get(ntf, 0), "SIG_ID", color=color.yellow, editable=false, display=display.status_line + display.data_window, precision=0)
-plot(array.get(ntf, 1), "SIG_DIR", color=color.yellow, editable=false, display=display.status_line + display.data_window, precision=0)
-plot(array.get(ntf, 2), "SIG_ENTRY", color=color.yellow, editable=false, display=display.status_line + display.data_window)
-plot(array.get(ntf, 3), "SIG_SL", color=color.yellow, editable=false, display=display.status_line + display.data_window)
-plot(array.get(ntf, 4), "SIG_TP", color=color.yellow, editable=false, display=display.status_line + display.data_window)
+    0
+if showRev and (rvSigL or rvSigS)
+    f_draw2220()
