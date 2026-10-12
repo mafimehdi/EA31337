@@ -2100,10 +2100,10 @@ if barstate.isconfirmed and goNew and not na(goTP) and not na(goSL) and array.si
 f_stTxt(int n, int w, float r) => n == 0 ? "no trades yet" : str.tostring(n) + " trades  ·  win " + str.tostring(100.0 * w / n, "#") + "%  ·  avg " + str.tostring(r / n, "#.##") + "R  ·  total " + str.tostring(r, "#.#") + "R"
 f_draw2121() =>
     sN = array.size(sgDir)
-    sBridge = sN > 0 ? "SIG#" + str.tostring(label.get_x(array.get(sgLbl, sN - 1))) + " " + (array.get(sgDir, sN - 1) == 1 ? "BUY @" : "SELL @") + fmt(array.get(sgE, sN - 1)) + " SL:" + fmt(array.get(sgSL, sN - 1)) + " TP:" + fmt(array.get(sgTP, sN - 1)) : ""
+    sBridge = sN > 0 ? "  |  SIG#" + str.tostring(label.get_x(array.get(sgLbl, sN - 1))) + " " + (array.get(sgDir, sN - 1) == 1 ? "BUY @" : "SELL @") + fmt(array.get(sgE, sN - 1)) + " SL:" + fmt(array.get(sgSL, sN - 1)) + " TP:" + fmt(array.get(sgTP, sN - 1)) : ""
     table.cell(ck, 0, 0, "ENTRY CHECKLIST", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 1, 0, ckHead, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 0, sBridge, text_color=color.aqua, text_size=szT)
+    table.cell(ck, 1, 0, ckHead + sBridge, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(ck, 2, 0, "", text_size=szT)
     f_ck(1, "1  Direction", ckT1, ckO1, ckO1 ? "OK" : "NO")
     f_ck(2, "2  Location", ckT2, ckO2, ckO2 ? "OK" : "NO")
     f_ck(3, "3  Trigger", ckT3, ckO3, ckO3 ? "OK" : "NO")
@@ -2290,3 +2290,10 @@ f_draw2220() =>
     0
 if showRev and (rvSigL or rvSigS)
     f_draw2220()
+sgLast = array.size(sgDir) - 1
+plot(31337, "SIG Magic", display=display.status_line)
+plot(sgLast >= 0 ? label.get_x(array.get(sgLbl, sgLast)) : 0, "SIG Bar", display=display.status_line)
+plot(sgLast >= 0 ? array.get(sgDir, sgLast) : 0, "SIG Dir", display=display.status_line)
+plot(sgLast >= 0 ? array.get(sgE, sgLast) : 0, "SIG Entry", display=display.status_line)
+plot(sgLast >= 0 ? array.get(sgSL, sgLast) : 0, "SIG SL", display=display.status_line)
+plot(sgLast >= 0 ? array.get(sgTP, sgLast) : 0, "SIG TP", display=display.status_line)
