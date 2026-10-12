@@ -2088,6 +2088,7 @@ var sgE   = array.new_float()
 var sgSL  = array.new_float()
 var sgTP  = array.new_float()
 var sgLbl = array.new_label()
+var ntf   = array.from(0.0, 0.0, float(na), float(na), float(na))
 if barstate.isconfirmed and array.size(sgDir) > 0
     for i = array.size(sgDir) - 1 to 0
         dI = array.get(sgDir, i)
@@ -2126,6 +2127,11 @@ if barstate.isconfirmed and goNew and not na(goTP) and not na(goSL) and array.si
     array.push(sgSL, goSL)
     array.push(sgTP, goTP)
     array.push(sgLbl, label.new(bar_index, goDir == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, goDir == 1 ? "SIG▲" : "SIG▼", style=goDir == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.yellow, 20), textcolor=color.black, tooltip="SIG  entry " + str.tostring(close, format.mintick) + "  SL " + str.tostring(goSL, format.mintick) + "  TP " + str.tostring(goTP, format.mintick) + "  |  " + (goDir == 1 ? trgLoTxt : trgHiTxt)))
+    array.set(ntf, 0, array.get(ntf, 0) + 1)
+    array.set(ntf, 1, goDir)
+    array.set(ntf, 2, close)
+    array.set(ntf, 3, goSL)
+    array.set(ntf, 4, goTP)
 f_stTxt(int n, int w, float r) => n == 0 ? "no trades yet" : str.tostring(n) + " trades  ·  win " + str.tostring(100.0 * w / n, "#") + "%  ·  avg " + str.tostring(r / n, "#.##") + "R  ·  total " + str.tostring(r, "#.#") + "R"
 if barstate.islast and showChk
     table.cell(ck, 0, 7, "SIG STATS since " + str.format_time(stT0, "yyyy-MM-dd", "Asia/Tehran"), text_color=color.yellow, text_size=szT, text_halign=text.align_left)
@@ -2134,7 +2140,7 @@ if barstate.islast and showChk
 f_draw2121() =>
     table.cell(ck, 0, 0, "ENTRY CHECKLIST", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
     table.cell(ck, 1, 0, ckHead, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 0, "", text_size=szT)
+    table.cell(ck, 2, 0, array.get(ntf, 0) > 0 ? "SIG#" + str.tostring(array.get(ntf, 0), "#") : "", text_color=color.yellow, text_size=szT)
     f_ck(1, "1  Direction", ckT1, ckO1, ckO1 ? "OK" : "NO")
     f_ck(2, "2  Location", ckT2, ckO2, ckO2 ? "OK" : "NO")
     f_ck(3, "3  Trigger", ckT3, ckO3, ckO3 ? "OK" : "NO")
@@ -2320,6 +2326,11 @@ if showRev and (rvSigL or rvSigS)
             array.push(sgSL, rvSlC)
             array.push(sgTP, tpR)
             array.push(sgLbl, label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, d == 1 ? "SIG▲" : "SIG▼", style=d == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.yellow, 20), textcolor=color.black, tooltip="SIG (REV)  " + tipTxt))
+            array.set(ntf, 0, array.get(ntf, 0) + 1)
+            array.set(ntf, 1, d)
+            array.set(ntf, 2, e)
+            array.set(ntf, 3, rvSlC)
+            array.set(ntf, 4, tpR)
         if nOpen < revMax
             array.push(aDir, d)
             array.push(aPend, big)
@@ -2336,3 +2347,9 @@ rvOpenN = 0
 if barstate.islast and array.size(aDone) > 0
     for j = 0 to array.size(aDone) - 1
         rvOpenN += array.get(aDone, j) ? 0 : 1
+plot(31337, "SIG_KEY", color=color.yellow, editable=false, display=display.status_line + display.data_window, precision=0)
+plot(array.get(ntf, 0), "SIG_ID", color=color.yellow, editable=false, display=display.status_line + display.data_window, precision=0)
+plot(array.get(ntf, 1), "SIG_DIR", color=color.yellow, editable=false, display=display.status_line + display.data_window, precision=0)
+plot(array.get(ntf, 2), "SIG_ENTRY", color=color.yellow, editable=false, display=display.status_line + display.data_window)
+plot(array.get(ntf, 3), "SIG_SL", color=color.yellow, editable=false, display=display.status_line + display.data_window)
+plot(array.get(ntf, 4), "SIG_TP", color=color.yellow, editable=false, display=display.status_line + display.data_window)
