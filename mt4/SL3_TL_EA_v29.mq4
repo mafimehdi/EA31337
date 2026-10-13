@@ -11,7 +11,7 @@
 //|   - Optional Break-Even & Trailing on Structural TP trades        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "2.91"
+#property version   "3.00"
 
 //==================== INPUTS ====================
 input string  s0 = "==== General & Risk ====";
@@ -1239,12 +1239,17 @@ void ExecuteSigOrder(int dir, double rawSL, double rawTP, string commentTag)
       }
       else { lastMsg = "SIG skipped: SL $" + DoubleToString(dist, 1) + " < MinSlUsd $" + DoubleToString(minReq, 1); return; }
    }
+   double l1RngCur = (lastL1Hi != EMPTY_VALUE && lastL1Lo != EMPTY_VALUE) ? MathAbs(lastL1Hi - lastL1Lo) : 0.0;
+   if (SmartClusterGuard && amdState == 0 && vpState == 0 && l1RngCur < 40.0)
+   {
+      lastMsg = "SIG skipped: AMD=0 & VP=0 in narrow L1 range ($" + DoubleToString(l1RngCur, 1) + ")";
+      return;
+   }
    if (SmartClusterGuard && n >= MaxOpenWideSl)
    {
-      double l1RngCur = (lastL1Hi != EMPTY_VALUE && lastL1Lo != EMPTY_VALUE) ? MathAbs(lastL1Hi - lastL1Lo) : 0.0;
       double wCap     = (WideSlUsd > 0) ? WideSlUsd : 62.0;
       bool bigWave    = (ATR[1] >= 30.0) || (streakAll <= 1 && l1RngCur >= 70.0 && dist <= 1.15 * l1RngCur);
-      bool okNormal   = (streakAll == 0 && dist < wCap);
+      bool okNormal   = (streakAll == 0 && dist < wCap && (vpState != 0 || l1RngCur >= 35.0 || dist < 35.0));
       bool okAfter1   = (streakAll == 1 && dist < wCap && amdState != 0 && vpState != 0);
       if (!okNormal && !okAfter1 && !bigWave)
       {
@@ -1507,7 +1512,7 @@ void Panel()
 {
    if (!ShowPanel || (IsTesting() && !IsVisualMode())) return;
    int odir = 0; int nOpen = CountOpen(odir);
-   string t = "SL3 TL EA v2.90 (Champion H4 + Session TL + Confluence)  |  " + Symbol() + " M" + IntegerToString(Period()) + "\n";
+   string t = "SL3 TL EA v3.00 (Champion H4 + Low-DD Shield)  |  " + Symbol() + " M" + IntegerToString(Period()) + "\n";
    if (EngineMode == 1)
    {
       t += "CHAMPION ENGINE  |  Score: " + DoubleToString(scorePct, 0) + "% (min " + IntegerToString(MinScorePct) + "%)  |  close " + DoubleToString(C[1], Digits) + "  |  open trades: " + IntegerToString(nOpen) + "/" + IntegerToString(MaxOpenTrades) + "\n";
@@ -1535,7 +1540,7 @@ int OnInit()
    lastWinCloseBuy = 0; lastWinCloseSell = 0;
    lastWinOpenBuy  = 0; lastWinOpenSell  = 0;
    if (Period() != PERIOD_M15) Print("SL3 SIG EA: designed for M15");
-   Print("[SL3-INIT] v2.91 Drawdown Shield | SmartClusterGuard=", SmartClusterGuard, " | WideSlUsd=", DoubleToString((WideSlUsd > 0 ? WideSlUsd : 62.0), 1), " | MaxLossStreakDay=", (MaxLossStreakDay > 0 ? MaxLossStreakDay : (SmartClusterGuard ? 3 : 0)));
+   Print("[SL3-INIT] v3.00 Low-DD Shield | SmartClusterGuard=", SmartClusterGuard, " | WideSlUsd=", DoubleToString((WideSlUsd > 0 ? WideSlUsd : 62.0), 1), " | MaxLossStreakDay=", (MaxLossStreakDay > 0 ? MaxLossStreakDay : (SmartClusterGuard ? 3 : 0)));
    return INIT_SUCCEEDED;
 }
 void OnDeinit(const int r)
