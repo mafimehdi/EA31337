@@ -24,6 +24,7 @@ input bool    BlockOppositeOpen = true;   // do not open opposite trade while a 
 input bool    CloseOnOpposite   = false;  // close open trades when an opposite SIG appears
 input int     MaxTradesPerDay   = 0;      // new entries per server day (0 = unlimited)
 input int     MaxLossStreakDay  = 0;      // stop trading for the day after N consecutive losses (0 = off)
+input int     MaxSpreadPts      = 0;      // max allowed spread in points at entry (0 = off, e.g. 60 for live)
 input int     SlippagePts       = 30;
 input bool    ShowPanel         = true;
 input bool    DrawObjects       = true;   // draw session trendlines & SIG arrows on chart
@@ -757,67 +758,70 @@ void RunSigEngine()
       double brkUp = bosDir == 1 ? bosLvl : (htfDirB[c] == 1 && htfHB[c] != EMPTY_VALUE && C[c] > htfHB[c] ? htfHB[c] : EMPTY_VALUE);
       double brkDn = bosDir == -1 ? bosLvl : (htfDirB[c] == -1 && htfLB[c] != EMPTY_VALUE && C[c] < htfLB[c] ? htfLB[c] : EMPTY_VALUE);
 
-      // 2) Order Blocks (displacement + mitigation)
-      double body = MathAbs(C[c] - O[c]);
-      if (C[c] > O[c] && body >= ObDispAtr * ATR[c])
+      // 2) Order Blocks (displacement + mitigation; only needed for SIG Checklist Location)
+      if (EngineMode != 1)
       {
-         for (int i = 1; i <= ObLookback && c + i < nb; i++)
+         double body = MathAbs(C[c] - O[c]);
+         if (C[c] > O[c] && body >= ObDispAtr * ATR[c])
          {
-            if (C[c + i] < O[c + i])
+            for (int i = 1; i <= ObLookback && c + i < nb; i++)
             {
-               int obIdx = BarIdx(c + i);
-               if (obIdx != lastBullOB && C[c] > H[c + i])
+               if (C[c + i] < O[c + i])
                {
-                  double zt = ObBodyOnly ? MathMax(O[c + i], C[c + i]) : H[c + i];
-                  double zb = ObBodyOnly ? MathMin(O[c + i], C[c + i]) : L[c + i];
-                  if (nZones < ArraySize(zones))
+                  int obIdx = BarIdx(c + i);
+                  if (obIdx != lastBullOB && C[c] > H[c + i])
                   {
-                     zones[nZones].top = zt; zones[nZones].bot = zb; zones[nZones].bornIdx = idx;
-                     zones[nZones].dir = 1; zones[nZones].state = 0; nZones++;
+                     double zt = ObBodyOnly ? MathMax(O[c + i], C[c + i]) : H[c + i];
+                     double zb = ObBodyOnly ? MathMin(O[c + i], C[c + i]) : L[c + i];
+                     if (nZones < ArraySize(zones))
+                     {
+                        zones[nZones].top = zt; zones[nZones].bot = zb; zones[nZones].bornIdx = idx;
+                        zones[nZones].dir = 1; zones[nZones].state = 0; nZones++;
+                     }
+                     lastBullOB = obIdx;
                   }
-                  lastBullOB = obIdx;
+                  break;
                }
-               break;
             }
          }
-      }
-      if (C[c] < O[c] && body >= ObDispAtr * ATR[c])
-      {
-         for (int i = 1; i <= ObLookback && c + i < nb; i++)
+         if (C[c] < O[c] && body >= ObDispAtr * ATR[c])
          {
-            if (C[c + i] > O[c + i])
+            for (int i = 1; i <= ObLookback && c + i < nb; i++)
             {
-               int obIdx = BarIdx(c + i);
-               if (obIdx != lastBearOB && C[c] < L[c + i])
+               if (C[c + i] > O[c + i])
                {
-                  double zt = ObBodyOnly ? MathMax(O[c + i], C[c + i]) : H[c + i];
-                  double zb = ObBodyOnly ? MathMin(O[c + i], C[c + i]) : L[c + i];
-                  if (nZones < ArraySize(zones))
+                  int obIdx = BarIdx(c + i);
+                  if (obIdx != lastBearOB && C[c] < L[c + i])
                   {
-                     zones[nZones].top = zt; zones[nZones].bot = zb; zones[nZones].bornIdx = idx;
-                     zones[nZones].dir = -1; zones[nZones].state = 0; nZones++;
+                     double zt = ObBodyOnly ? MathMax(O[c + i], C[c + i]) : H[c + i];
+                     double zb = ObBodyOnly ? MathMin(O[c + i], C[c + i]) : L[c + i];
+                     if (nZones < ArraySize(zones))
+                     {
+                        zones[nZones].top = zt; zones[nZones].bot = zb; zones[nZones].bornIdx = idx;
+                        zones[nZones].dir = -1; zones[nZones].state = 0; nZones++;
+                     }
+                     lastBearOB = obIdx;
                   }
-                  lastBearOB = obIdx;
+                  break;
                }
-               break;
             }
          }
-      }
-      int cntBull = 0, cntBear = 0;
-      for (int zi = nZones - 1; zi >= 0; zi--)
-      {
-         bool dead = false;
-         if (zones[zi].dir == 1) { cntBull++; if (cntBull > MaxZones) dead = true; }
-         else { cntBear++; if (cntBear > MaxZones) dead = true; }
-         if (!dead && idx > zones[zi].bornIdx)
+         int cntBull = 0, cntBear = 0;
+         for (int zi = nZones - 1; zi >= 0; zi--)
          {
-            if (zones[zi].dir == 1) { if (L[c] <= zones[zi].top) zones[zi].state = 1; dead = (C[c] < zones[zi].bot); }
-            else { if (H[c] >= zones[zi].bot) zones[zi].state = 1; dead = (C[c] > zones[zi].top); }
-         }
-         if (dead)
-         {
-            for (int m = zi; m < nZones - 1; m++) zones[m] = zones[m + 1];
-            nZones--;
+            bool dead = false;
+            if (zones[zi].dir == 1) { cntBull++; if (cntBull > MaxZones) dead = true; }
+            else { cntBear++; if (cntBear > MaxZones) dead = true; }
+            if (!dead && idx > zones[zi].bornIdx)
+            {
+               if (zones[zi].dir == 1) { if (L[c] <= zones[zi].top) zones[zi].state = 1; dead = (C[c] < zones[zi].bot); }
+               else { if (H[c] >= zones[zi].bot) zones[zi].state = 1; dead = (C[c] > zones[zi].top); }
+            }
+            if (dead)
+            {
+               for (int m = zi; m < nZones - 1; m++) zones[m] = zones[m + 1];
+               nZones--;
+            }
          }
       }
 
@@ -838,6 +842,9 @@ void RunSigEngine()
          if (sweepBullB[c] && !sweepBearB[c]) { instState = 1; instTxt = "Sweep bull (" + IntegerToString(c - 1) + "b ago)"; }
          else if (sweepBearB[c] && !sweepBullB[c]) { instState = -1; instTxt = "Sweep bear (" + IntegerToString(c - 1) + "b ago)"; }
       }
+
+      // Skip SIG Checklist / Trigger Score / REV calculations when running in pure Legacy Champion mode (EngineMode == 1)
+      if (EngineMode == 1) continue;
 
       // 4) VP levels for recent bars (only computed where needed)
       double cPOC = EMPTY_VALUE, cVAH = EMPTY_VALUE, cVAL = EMPTY_VALUE; int cVpSt = 0;
@@ -1148,24 +1155,39 @@ double LegacyPlanStop(int dir, double entryPx)
 //==================== TRADING & EXECUTION ====================
 int CountOpen(int &dirOut)
 {
-   int n = 0; dirOut = 0;
+   int buyCount = 0, sellCount = 0;
    for (int i = OrdersTotal() - 1; i >= 0; i--)
       if (OrderSelect(i, SELECT_BY_POS) && OrderSymbol() == Symbol() && OrderMagicNumber() == Magic && OrderType() <= OP_SELL)
       {
-         n++; dirOut = OrderType() == OP_BUY ? 1 : -1;
+         if (OrderType() == OP_BUY) buyCount++;
+         else if (OrderType() == OP_SELL) sellCount++;
       }
-   return n;
+   if (buyCount > 0 && sellCount == 0) dirOut = 1;
+   else if (sellCount > 0 && buyCount == 0) dirOut = -1;
+   else if (buyCount > 0 && sellCount > 0) dirOut = 2; // mixed/hedged positions
+   else dirOut = 0;
+   return buyCount + sellCount;
+}
+double MoneyPerPriceUnit()
+{
+   double tv = MarketInfo(Symbol(), MODE_TICKVALUE), ts = MarketInfo(Symbol(), MODE_TICKSIZE);
+   if (tv > 0 && ts > 0) return tv / ts;
+   double contract = MarketInfo(Symbol(), MODE_LOTSIZE);
+   if (contract > 0) return contract;
+   return 100.0; // standard 100 oz XAUUSD fallback
 }
 double LotFor(double slDist)
 {
    double step = MarketInfo(Symbol(), MODE_LOTSTEP), mn = MarketInfo(Symbol(), MODE_MINLOT), mx = MarketInfo(Symbol(), MODE_MAXLOT);
+   if (mn <= 0) mn = 0.01;
+   if (mx <= 0) mx = 100.0;
    double lots = FixedLot;
-   if (RiskPercent > 0)
+   if (RiskPercent > 0 && slDist > 0)
    {
-      double tv = MarketInfo(Symbol(), MODE_TICKVALUE), ts = MarketInfo(Symbol(), MODE_TICKSIZE);
-      if (tv > 0 && ts > 0 && slDist > 0) lots = AccountEquity() * RiskPercent / 100.0 / (slDist / ts * tv);
+      double valPerUnit = MoneyPerPriceUnit();
+      if (valPerUnit > 0) lots = AccountEquity() * RiskPercent / 100.0 / (slDist * valPerUnit);
    }
-   if (step > 0) lots = MathFloor(lots / step) * step;
+   if (step > 0) lots = MathFloor((lots + 1e-9) / step) * step;
    return NormalizeDouble(MathMax(mn, MathMin(mx, lots)), 2);
 }
 void MarkSig(int dir, string tag)
@@ -1191,6 +1213,11 @@ void ExecuteSigOrder(int dir, double rawSL, double rawTP, string commentTag)
    if (!TradeTimeOK(TimeCurrent())) { lastMsg = "SIG skipped: outside trading hours"; return; }
 
    RefreshRates();
+   if (MaxSpreadPts > 0 && Point > 0)
+   {
+      double curSpreadPts = (Ask - Bid) / Point;
+      if (curSpreadPts > MaxSpreadPts) { lastMsg = "SIG skipped: spread " + DoubleToString(curSpreadPts, 0) + " pts > MaxSpreadPts " + IntegerToString(MaxSpreadPts); return; }
+   }
    double e = (dir == 1) ? Ask : Bid;
    double minD = MathMax(MarketInfo(Symbol(), MODE_STOPLEVEL) * Point, Point * 10);
    double ordSL = rawSL;
@@ -1225,8 +1252,8 @@ void ExecuteSigOrder(int dir, double rawSL, double rawTP, string commentTag)
    }
 
    double lots = LotFor(dist);
-   double tv = MarketInfo(Symbol(), MODE_TICKVALUE), ts = MarketInfo(Symbol(), MODE_TICKSIZE);
-   double riskPct = (tv > 0 && ts > 0 && AccountEquity() > 0) ? dist / ts * tv * lots / AccountEquity() * 100.0 : 0;
+   double valPerUnit = MoneyPerPriceUnit();
+   double riskPct = (valPerUnit > 0 && AccountEquity() > 0) ? dist * valPerUnit * lots / AccountEquity() * 100.0 : 0;
    if (MaxRiskPct > 0 && riskPct > MaxRiskPct) { lastMsg = "SIG skipped: real risk " + DoubleToString(riskPct, 1) + "% > MaxRiskPct"; return; }
 
    int tk = OrderSend(Symbol(), dir == 1 ? OP_BUY : OP_SELL, lots, e, SlippagePts, NormalizeDouble(ordSL, Digits), NormalizeDouble(ordTP, Digits), commentTag, Magic, 0, dir == 1 ? clrLime : clrRed);
@@ -1451,16 +1478,24 @@ void Manage(bool newBar)
 //==================== DASHBOARD PANEL ====================
 void Panel()
 {
-   if (!ShowPanel) return;
+   if (!ShowPanel || (IsTesting() && !IsVisualMode())) return;
    int odir = 0; int nOpen = CountOpen(odir);
-   string dn = chkDirNow == 1 ? "LONG" : chkDirNow == -1 ? "SHORT" : "NONE";
-   string t = "SL3 SIG EA v2.1 (Pine Checklist + Score + REV)  |  " + Symbol() + " M" + IntegerToString(Period()) + "\n";
-   t += "ENTRY CHECKLIST  |  candidate: " + dn + "  |  close " + DoubleToString(C[1], Digits) + "  |  open trades: " + IntegerToString(nOpen) + "/" + IntegerToString(MaxOpenTrades) + "\n";
-   t += "1 Direction     : [" + (ckO1 ? "OK" : "NO") + "]  " + ckT1 + "\n";
-   t += "2 Location      : [" + (ckO2 ? "OK" : "NO") + "]  " + ckT2 + "\n";
-   t += "3 Trigger       : [" + (ckO3 ? "OK" : "NO") + "]  " + ckT3 + "\n";
-   t += "4 Stop / target : [" + (ckO4 ? "OK" : "NO") + "]  " + ckT4 + "\n";
-   t += "RESULT          : [" + (ckGo ? "GO" : "WAIT") + "]  " + ckRes + "\n";
+   string t = "SL3 TL EA v2.90 (Champion H4 + Session TL + Confluence)  |  " + Symbol() + " M" + IntegerToString(Period()) + "\n";
+   if (EngineMode == 1)
+   {
+      t += "CHAMPION ENGINE  |  Score: " + DoubleToString(scorePct, 0) + "% (min " + IntegerToString(MinScorePct) + "%)  |  close " + DoubleToString(C[1], Digits) + "  |  open trades: " + IntegerToString(nOpen) + "/" + IntegerToString(MaxOpenTrades) + "\n";
+      t += "Confluence       : HTF(" + IntegerToString(HtfTf) + "m)=" + IntegerToString(htfDir) + "  ST=" + IntegerToString(stState) + "  AMD=" + IntegerToString(amdState) + "  VP=" + IntegerToString(vpState) + "  VOL=" + IntegerToString(volState) + "  INST=" + IntegerToString(instState) + "\n";
+   }
+   else
+   {
+      string dn = chkDirNow == 1 ? "LONG" : chkDirNow == -1 ? "SHORT" : "NONE";
+      t += "ENTRY CHECKLIST  |  candidate: " + dn + "  |  close " + DoubleToString(C[1], Digits) + "  |  open trades: " + IntegerToString(nOpen) + "/" + IntegerToString(MaxOpenTrades) + "\n";
+      t += "1 Direction     : [" + (ckO1 ? "OK" : "NO") + "]  " + ckT1 + "\n";
+      t += "2 Location      : [" + (ckO2 ? "OK" : "NO") + "]  " + ckT2 + "\n";
+      t += "3 Trigger       : [" + (ckO3 ? "OK" : "NO") + "]  " + ckT3 + "\n";
+      t += "4 Stop / target : [" + (ckO4 ? "OK" : "NO") + "]  " + ckT4 + "\n";
+      t += "RESULT          : [" + (ckGo ? "GO" : "WAIT") + "]  " + ckRes + "\n";
+   }
    t += "Modules         : AMD=" + amdTxt + "  |  VP POC=" + DoubleToString(vpPOC, Digits) + " VAH=" + DoubleToString(vpVAH, Digits) + " VAL=" + DoubleToString(vpVAL, Digits) + "  |  TL=" + tlTxt + "\n";
    t += "Last Action     : " + lastMsg;
    Comment(t);
@@ -1495,7 +1530,7 @@ void OnTick()
       VolumeVote();
       Amd();
       Trendlines();
-      PinBars();
+      if (EngineMode != 1) PinBars();
       RunSigEngine();
       LegacyScore();
       TryEntry();
