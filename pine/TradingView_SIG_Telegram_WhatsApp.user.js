@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TradingView SL3-AMD-VP — SIG Telegram & WhatsApp Notifier (Free Account)
 // @namespace    https://github.com/mafimehdi/EA31337
-// @version      1.0.0
+// @version      1.2.0
 // @description  Reads live SIG▲ / SIG▼ signals directly from TradingView DOM (Status Line 31337 bridge & table) without needing a paid TradingView account, and sends instant alerts to Telegram and/or WhatsApp.
 // @author       SL3-AMD-VP
 // @match        https://*.tradingview.com/chart/*
@@ -14,16 +14,15 @@
 (function () {
     'use strict';
 
-    // ─── تنظیمات پیش‌فرض (می‌توانید اینجا یا مستقیماً از دکمه 🔔 روی چارت تریدینگ‌ویو وارد کنید) ───
+    const STORAGE_KEY = 'sl3_sig_notifier_cfg_v1';
     const DEFAULT_CONFIG = {
-        tgToken: '',       // مثال: '7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-        tgChatId: '',      // مثال: '123456789' یا '-1001234567890'
-        waPhone: '',       // شماره واتساپ با کد کشور، مثال: '+98912xxxxxxx' یا '+324xxxxxxxx'
-        waApiKey: '',      // کلید رایگان CallMeBot واتساپ
+        tgToken: '',
+        tgChatId: '',
+        waPhone: '',
+        waApiKey: '',
         soundOn: true,
     };
 
-    const STORAGE_KEY = 'sl3_sig_notifier_cfg_v1';
     function loadCfg() {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
@@ -32,63 +31,100 @@
             return Object.assign({}, DEFAULT_CONFIG);
         }
     }
+
     function saveCfg(cfg) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+        } catch (e) {}
     }
 
     let cfg = loadCfg();
-    let maxSeenSigId = null; // در اولین بارگذاری، آخرین شماره SIG ذخیره می‌شود تا سیگنال‌های قدیمی ارسال نشوند
-    let lastSentSigId = 0;
+    let maxSeenSigId = null;
+    let lastSentSigId = null;
 
-    // ─── پخش صدای هشدار در مرورگر ───
     function playBeep() {
         if (!cfg.soundOn) return;
         try {
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            [587.33, 880.0].forEach((freq, idx) => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'sine';
-                osc.frequency.value = freq;
-                gain.gain.setValueAtTime(0.18, ctx.currentTime + idx * 0.16);
-                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.16 + 0.15);
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(ctx.currentTime + idx * 0.16);
-                osc.stop(ctx.currentTime + idx * 0.16 + 0.16);
-            });
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.12);
+            gain.gain.setValueAtTime(0.18, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.38);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.4);
         } catch (e) {}
     }
 
-    // ─── ارسال پیام به تلگرام ───
-    function sendTelegram(text, cb) {
-        if (!cfg.tgToken || !cfg.tgChatId) {
-            if (cb) cb(false, 'توکن یا Chat ID تلگرام وارد نشده است.');
+    function isLikelyPhoneNumber(v) {
+        if (!v) return false;
+        const s = v.trim();
+        return s.startsWith('+98') || s.startsWith('09') || s.startsWith('0098') || (s.startsWith('+') && s.length >= 11);
+    }
+
+    // دریافت خودکار Chat ID از طریق getUpdates تلگرام (فقط با داشتن Bot Token!)
+    function autoFindChatId(token, cb) {
+        if (!token) {
+            cb(false, null, '❌ ابتدا توکن ربات (Bot Token) دریافتی از @BotFather را در کادر اول وارد کنید.');
             return;
         }
-        const url = `https://api.telegram.org/bot${cfg.tgToken.trim()}/sendMessage`;
-        const payload = JSON.stringify({
-            chat_id: cfg.tgChatId.trim(),
-            text: text,
-            parse_mode: 'HTML',
-            disable_web_page_preview: true,
-        });
-
-        if (typeof GM_xmlhttpRequest === 'function') {
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: url,
-                headers: { 'Content-Type': 'application/json' },
-                data: payload,
-                onload: (res) => {
-                    const ok = res.status >= 200 && res.status < 300;
-                    if (cb) cb(ok, ok ? 'ارسال به تلگرام موفق بود!' : res.responseText);
-                },
-                onerror: (err) => {
-                    if (cb) cb(false, 'خطا در اتصال به تلگرام');
-                },
+        const url = `https://api.telegram.org/bot${token.trim()}/getUpdates`;
+        fetch(url)
+            .then((r) => r.json())
+            .then((d) => {
+                if (!d.ok) {
+                    cb(false, null, '❌ کد Bot Token اشتباه است: ' + (d.description || 'توکن را دقیق از @BotFather کپی کنید.'));
+                    return;
+                }
+                const updates = d.result || [];
+                for (let i = updates.length - 1; i >= 0; i--) {
+                    const u = updates[i];
+                    const chat =
+                        (u.message && u.message.chat) ||
+                        (u.channel_post && u.channel_post.chat) ||
+                        (u.my_chat_member && u.my_chat_member.chat) ||
+                        (u.edited_message && u.edited_message.chat);
+                    if (chat && chat.id) {
+                        cb(true, String(chat.id), `✅ شناسه چت تلگرام شما به صورت خودکار پیدا شد: ${chat.id}`);
+                        return;
+                    }
+                }
+                cb(
+                    false,
+                    null,
+                    '⚠️ توکن ربات درست است، اما هنوز در تلگرام وارد ربات خودتان نشده‌اید! در تلگرام وارد ربات خود شوید، دکمه Start را بزنید (یا یک پیام مثل "سلام" بفرستید) و دوباره این دکمه را بزنید.'
+                );
+            })
+            .catch(() => {
+                cb(
+                    false,
+                    null,
+                    '❌ مرورگر نتوانست به سرور تلگرام (api.telegram.org) وصل شود! لطفاً مطمئن شوید فیلترشکن (VPN) سیستم/مرورگر شما روشن است.'
+                );
             });
-        } else {
+    }
+
+    function sendTelegram(text, cb) {
+        const token = (cfg.tgToken || '').trim();
+        let chatId = (cfg.tgChatId || '').trim();
+
+        if (!token) {
+            if (cb) cb(false, '❌ لطفاً توکن ربات (Bot Token) را در کادر اول وارد کنید.');
+            return;
+        }
+
+        const doSend = (finalChatId) => {
+            const url = `https://api.telegram.org/bot${token}/sendMessage`;
+            const payload = JSON.stringify({
+                chat_id: finalChatId,
+                text: text,
+                parse_mode: 'HTML',
+                disable_web_page_preview: true,
+            });
             fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -96,19 +132,43 @@
             })
                 .then((r) => r.json())
                 .then((d) => {
-                    if (cb) cb(!!d.ok, d.ok ? 'ارسال به تلگرام موفق بود!' : JSON.stringify(d));
+                    if (d.ok) {
+                        if (cb) cb(true, '✅ پیام با موفقیت به تلگرام شما ارسال شد! (تلگرام خود را چک کنید)');
+                    } else {
+                        if (cb)
+                            cb(
+                                false,
+                                `❌ خطای تلگرام (${d.error_code || ''}): ${d.description || ''} — توجه: در کادر دوم نباید شماره موبایل وارد شود؛ باید Chat ID عددی باشد (یا کادر دوم را خالی بگذارید تا خودکار پیدا شود).`
+                            );
+                    }
                 })
                 .catch(() => {
-                    const getUrl = `https://api.telegram.org/bot${cfg.tgToken.trim()}/sendMessage?chat_id=${encodeURIComponent(cfg.tgChatId.trim())}&parse_mode=HTML&text=${encodeURIComponent(text)}`;
-                    const img = new Image();
-                    img.onload = () => { if (cb) cb(true, 'ارسال به تلگرام انجام شد.'); };
-                    img.onerror = () => { if (cb) cb(true, 'درخواست ارسال به تلگرام فرستاده شد.'); };
-                    img.src = getUrl;
+                    if (cb)
+                        cb(
+                            false,
+                            '❌ مرورگر نتوانست به سرور تلگرام (api.telegram.org) وصل شود! لطفاً مطمئن شوید فیلترشکن (VPN) سیستم یا مرورگر شما روشن است.'
+                        );
                 });
+        };
+
+        // اگر کادر Chat ID خالی است یا کاربر به اشتباه شماره موبایل وارد کرده، خودکار از getUpdates پیدایش کن!
+        if (!chatId || isLikelyPhoneNumber(chatId)) {
+            autoFindChatId(token, (ok, foundId, msg) => {
+                if (!ok) {
+                    if (cb) cb(false, msg);
+                    return;
+                }
+                cfg.tgChatId = foundId;
+                saveCfg(cfg);
+                const cidInput = document.getElementById('sl3_tg_cid');
+                if (cidInput) cidInput.value = foundId;
+                doSend(foundId);
+            });
+        } else {
+            doSend(chatId);
         }
     }
 
-    // ─── ارسال پیام به واتساپ (از طریق سرویس رایگان CallMeBot) ───
     function sendWhatsApp(text, cb) {
         if (!cfg.waPhone || !cfg.waApiKey) {
             if (cb) cb(false, 'شماره یا API Key واتساپ وارد نشده است.');
@@ -116,31 +176,18 @@
         }
         const cleanText = text.replace(/<[^>]+>/g, '');
         const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(cfg.waPhone.trim())}&text=${encodeURIComponent(cleanText)}&apikey=${encodeURIComponent(cfg.waApiKey.trim())}`;
-
-        if (typeof GM_xmlhttpRequest === 'function') {
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: url,
-                onload: (res) => {
-                    if (cb) cb(res.status >= 200 && res.status < 300, 'درخواست واتساپ ارسال شد.');
-                },
-                onerror: () => {
-                    if (cb) cb(false, 'خطا در اتصال به واتساپ');
-                },
+        fetch(url, { mode: 'no-cors' })
+            .then(() => {
+                if (cb) cb(true, '✅ درخواست واتساپ ارسال شد.');
+            })
+            .catch(() => {
+                if (cb) cb(false, '❌ خطا در اتصال به سرویس واتساپ.');
             });
-        } else {
-            fetch(url, { mode: 'no-cors' }).then(() => {
-                if (cb) cb(true, 'درخواست واتساپ ارسال شد.');
-            });
-        }
     }
 
-    // ─── استخراج سیگنال SIG از Status Line (کلید 31337) روی صفحه تریدینگ‌ویو ───
     function readSigFromPage() {
         const bodyTxt = (document.body.innerText || '').replace(/[−–—]/g, '-').replace(/,/g, '');
 
-        // ۱) الگوی مستقیم سلول هدر جدول ENTRY CHECKLIST:
-        // SIG#12345 BUY @4650.00 SL:4638.00 TP:4674.00
         const reHeader = /SIG#(\d+)\s+(BUY|SELL)\s+@(-?\d+(?:\.\d+)?)\s+SL:(-?\d+(?:\.\d+)?)\s+TP:(-?\d+(?:\.\d+)?)/;
         const mh = bodyTxt.match(reHeader);
         if (mh) {
@@ -153,25 +200,6 @@
             };
         }
 
-        // ۲) الگوی ردیف RESULT جدول ENTRY CHECKLIST:
-        // BUY allowed at 4650.00 · SL 4638.00 · TP 4674.00
-        const reRes = /(BUY|SELL)\s+allowed\s+at\s+(-?\d+(?:\.\d+)?)\s*·\s*SL\s+(-?\d+(?:\.\d+)?)\s*·\s*TP\s+(-?\d+(?:\.\d+)?)/;
-        const mr = bodyTxt.match(reRes);
-        if (mr) {
-            const e = parseFloat(mr[2]);
-            const s = parseFloat(mr[3]);
-            const t = parseFloat(mr[4]);
-            const sigId = Math.round(e * 100) * 10000 + Math.round(s * 100);
-            return {
-                sigId,
-                sigDir: mr[1] === 'BUY' ? 1 : -1,
-                entry: e,
-                sl: s,
-                tp: t,
-            };
-        }
-
-        // ۳) الگوی کلید 31337 در لجند (در صورت وجود)
         const re31337 = /\b31337\b[^0-9-]*(-?\d+)[^0-9-]*(-?1|0)[^0-9-]*(-?\d+(?:\.\d+)?)[^0-9-]*(-?\d+(?:\.\d+)?)[^0-9-]*(-?\d+(?:\.\d+)?)/;
         const m3 = bodyTxt.match(re31337);
         if (m3) {
@@ -198,7 +226,12 @@
         const risk = Math.abs(sig.entry - sig.sl);
         const reward = Math.abs(sig.tp - sig.entry);
         const rr = risk > 0 ? (reward / risk).toFixed(2) : '—';
-        const tehranTime = new Date().toLocaleTimeString('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const tehranTime = new Date().toLocaleTimeString('fa-IR', {
+            timeZone: 'Asia/Tehran',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        });
 
         return [
             isTest ? '🧪 <b>[تست اتصال نوتیفیکیشن SL3-AMD-VP]</b>' : '🚨 <b>سیگنال جدید SIG در تریدینگ‌ویو!</b>',
@@ -212,102 +245,87 @@
         ].join('\n');
     }
 
-    // ─── رابط کاربری کوچک روی صفحه تریدینگ‌ویو ───
     const oldBadge = document.getElementById('sl3-sig-badge');
     if (oldBadge) oldBadge.remove();
     const badge = document.createElement('div');
     badge.id = 'sl3-sig-badge';
-    badge.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:999999;background:#131722;color:#f0b90b;border:2px solid #f0b90b;border-radius:6px;padding:7px 12px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.65);user-select:none;';
-    badge.innerHTML = '🔔 <b>SIG Notifier:</b> آماده (کلیک برای تنظیمات تلگرام/واتساپ)';
+    badge.style.cssText =
+        'position:fixed;bottom:14px;left:14px;z-index:999999;background:#131722;color:#f0b90b;border:2px solid #f0b90b;border-radius:6px;padding:7px 12px;font:12px/1.4 Tahoma,sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.65);user-select:none;';
+    badge.innerHTML = '🔔 <b>SIG Notifier:</b> آماده (کلیک برای تنظیمات تلگرام)';
     document.body.appendChild(badge);
 
     function openConfigModal() {
-        const existing = document.getElementById('sl3-sig-modal');
-        if (existing) {
-            existing.remove();
-            return;
-        }
+        const old = document.getElementById('sl3-sig-modal');
+        if (old) old.remove();
+
         const modal = document.createElement('div');
         modal.id = 'sl3-sig-modal';
-        modal.style.cssText = 'position:fixed;bottom:52px;left:14px;z-index:999999;width:340px;background:#1e222d;color:#d1d4dc;border:1px solid #363c4e;border-radius:8px;padding:14px;font:12px/1.5 Tahoma,sans-serif;direction:rtl;text-align:right;box-shadow:0 8px 24px rgba(0,0,0,0.65);';
+        modal.style.cssText =
+            'position:fixed;inset:0;z-index:1000000;background:rgba(0,0,0,0.68);display:flex;align-items:center;justify-content:center;direction:rtl;font-family:Tahoma,sans-serif;';
         modal.innerHTML = `
-            <div style="font-weight:bold;color:#f0b90b;margin-bottom:8px;font-size:13px;">⚙️ تنظیمات ارسال سیگنال SIG به تلگرام و واتساپ</div>
-            <label style="display:block;margin-top:6px;">توکن ربات تلگرام (Bot Token از @BotFather):</label>
-            <input id="sl3-tg-token" type="text" value="${cfg.tgToken}" placeholder="7123456:AAH..." style="width:100%;box-sizing:border-box;padding:5px;margin-top:2px;background:#131722;color:#fff;border:1px solid #434651;border-radius:4px;direction:ltr;">
-            <label style="display:block;margin-top:6px;">آیدی عددی چت/کانال تلگرام (Chat ID از @userinfobot):</label>
-            <input id="sl3-tg-chat" type="text" value="${cfg.tgChatId}" placeholder="123456789" style="width:100%;box-sizing:border-box;padding:5px;margin-top:2px;background:#131722;color:#fff;border:1px solid #434651;border-radius:4px;direction:ltr;">
-            <label style="display:block;margin-top:6px;">شماره واتساپ (اختیاری - با کد کشور):</label>
-            <input id="sl3-wa-phone" type="text" value="${cfg.waPhone}" placeholder="+98912..." style="width:100%;box-sizing:border-box;padding:5px;margin-top:2px;background:#131722;color:#fff;border:1px solid #434651;border-radius:4px;direction:ltr;">
-            <label style="display:block;margin-top:6px;">کلید CallMeBot واتساپ (اختیاری):</label>
-            <input id="sl3-wa-key" type="text" value="${cfg.waApiKey}" placeholder="123456" style="width:100%;box-sizing:border-box;padding:5px;margin-top:2px;background:#131722;color:#fff;border:1px solid #434651;border-radius:4px;direction:ltr;">
-            <div style="display:flex;gap:6px;margin-top:10px;">
-                <button id="sl3-btn-save" style="flex:1;background:#26a69a;color:#fff;border:none;border-radius:4px;padding:6px;cursor:pointer;font-weight:bold;">ذخیره</button>
-                <button id="sl3-btn-test" style="flex:1;background:#f0b90b;color:#000;border:none;border-radius:4px;padding:6px;cursor:pointer;font-weight:bold;">ارسال پیام تست</button>
-                <button id="sl3-btn-close" style="background:#ef5350;color:#fff;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">بستن</button>
+            <div style="background:#1e222d;color:#d1d4dc;border:2px solid #f0b90b;border-radius:10px;width:440px;max-width:94vw;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,0.8);">
+                <h3 style="margin:0 0 10px;color:#f0b90b;font-size:15px;">🔔 تنظیمات ارسال خودکار SIG به تلگرام و واتساپ</h3>
+                <div style="background:#131722;border-right:3px solid #26a69a;padding:8px 10px;margin-bottom:12px;font-size:11.5px;line-height:1.6;color:#e0e3eb;">
+                    <b>راهنمای ۳ ثانیه‌ای تلگرام:</b><br>
+                    ۱) کد <b>Bot Token</b> که از <code>@BotFather</code> گرفته‌اید را در کادر اول بگذارید.<br>
+                    ۲) در تلگرام وارد ربات خودتان شوید و یک بار دکمه <b>Start</b> (یا پیام «سلام») بفرستید.<br>
+                    ۳) کادر دوم را <b>خالی بگذارید</b> (شماره موبایل ننویسید!) و مستقیم دکمه سبز <b>«🧪 تشخیص خودکار و ارسال تست»</b> را بزنید!
+                </div>
+                <label style="font-size:12px;color:#9db2bd;">۱. کد توکن ربات تلگرام (Bot Token از @BotFather):</label>
+                <input id="sl3_tg_tok" type="text" value="${cfg.tgToken}" placeholder="مثال: 7123456789:AAH..." style="width:100%;box-sizing:border-box;margin:4px 0 10px;padding:7px;border-radius:5px;border:1px solid #363c4e;background:#131722;color:#fff;direction:ltr;">
+                <label style="font-size:12px;color:#9db2bd;">۲. شناسه عددی چت (Chat ID — خالی بگذارید تا خودکار پر شود، شماره موبایل ننویسید):</label>
+                <input id="sl3_tg_cid" type="text" value="${isLikelyPhoneNumber(cfg.tgChatId) ? '' : cfg.tgChatId}" placeholder="خالی بگذارید تا خودکار پیدا شود (مثال: 123456789)" style="width:100%;box-sizing:border-box;margin:4px 0 10px;padding:7px;border-radius:5px;border:1px solid #363c4e;background:#131722;color:#fff;direction:ltr;">
+                <div id="sl3_st" style="font-size:12px;line-height:1.5;min-height:22px;margin:8px 0 12px;padding:6px 8px;border-radius:5px;background:#131722;color:#f0b90b;">وضعیت: آماده تست اتصال</div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+                    <button id="sl3_test" style="background:#26a69a;color:#fff;border:none;padding:8px 14px;border-radius:5px;cursor:pointer;font-weight:bold;">🧪 تشخیص خودکار و ارسال تست</button>
+                    <button id="sl3_save" style="background:#f0b90b;color:#000;border:none;padding:8px 14px;border-radius:5px;cursor:pointer;font-weight:bold;">💾 ذخیره</button>
+                    <button id="sl3_cls" style="background:#363c4e;color:#fff;border:none;padding:8px 12px;border-radius:5px;cursor:pointer;">بستن</button>
+                </div>
             </div>
-            <div id="sl3-status-msg" style="margin-top:8px;font-size:11px;color:#9e9e9e;"></div>
         `;
         document.body.appendChild(modal);
 
-        document.getElementById('sl3-btn-close').onclick = () => modal.remove();
-        document.getElementById('sl3-btn-save').onclick = () => {
-            cfg.tgToken = document.getElementById('sl3-tg-token').value.trim();
-            cfg.tgChatId = document.getElementById('sl3-tg-chat').value.trim();
-            cfg.waPhone = document.getElementById('sl3-wa-phone').value.trim();
-            cfg.waApiKey = document.getElementById('sl3-wa-key').value.trim();
+        const pullInputs = () => {
+            cfg.tgToken = document.getElementById('sl3_tg_tok').value.trim();
+            const rawCid = document.getElementById('sl3_tg_cid').value.trim();
+            cfg.tgChatId = isLikelyPhoneNumber(rawCid) ? '' : rawCid;
             saveCfg(cfg);
-            document.getElementById('sl3-status-msg').style.color = '#26a69a';
-            document.getElementById('sl3-status-msg').textContent = '✅ تنظیمات ذخیره شد!';
         };
-        document.getElementById('sl3-btn-test').onclick = () => {
-            cfg.tgToken = document.getElementById('sl3-tg-token').value.trim();
-            cfg.tgChatId = document.getElementById('sl3-tg-chat').value.trim();
-            cfg.waPhone = document.getElementById('sl3-wa-phone').value.trim();
-            cfg.waApiKey = document.getElementById('sl3-wa-key').value.trim();
-            saveCfg(cfg);
-            const cur = readSigFromPage() || { sigId: 99, sigDir: 1, entry: 4650.0, sl: 4630.0, tp: 4690.0 };
-            const msg = formatSignalMessage(cur, true);
-            const stEl = document.getElementById('sl3-status-msg');
+
+        document.getElementById('sl3_cls').onclick = () => modal.remove();
+        document.getElementById('sl3_save').onclick = () => {
+            pullInputs();
+            modal.remove();
+        };
+        document.getElementById('sl3_test').onclick = () => {
+            pullInputs();
+            const stEl = document.getElementById('sl3_st');
             stEl.style.color = '#f0b90b';
-            stEl.textContent = 'در حال ارسال پیام تست...';
+            stEl.textContent = '⏳ در حال اتصال به تلگرام و ارسال پیام تست...';
+            const liveSig = readSigFromPage() || { sigId: 999, sigDir: 1, entry: 4182.5, sl: 4170.0, tp: 4207.5 };
+            const msg = formatSignalMessage(liveSig, true);
             playBeep();
-            if (cfg.tgToken && cfg.tgChatId) {
-                sendTelegram(msg, (ok, info) => {
+            sendTelegram(msg, (ok, info) => {
+                if (stEl) {
                     stEl.style.color = ok ? '#26a69a' : '#ef5350';
                     stEl.textContent = info;
-                });
-            }
-            if (cfg.waPhone && cfg.waApiKey) {
-                sendWhatsApp(msg, (ok, info) => {
-                    if (!cfg.tgToken) {
-                        stEl.style.color = ok ? '#26a69a' : '#ef5350';
-                        stEl.textContent = info;
-                    }
-                });
-            }
+                }
+            });
         };
     }
 
     badge.onclick = openConfigModal;
-    if (!cfg.tgToken && !cfg.waPhone) {
-        openConfigModal();
-    }
-    console.log('%c✅ SIG Notifier فعال شد! پنجره تنظیمات و دکمه 🔔 در گوشه پایین-چپ چارت قرار گرفت.', 'color:#26a69a;font-weight:bold;font-size:14px;');
+    openConfigModal();
 
-    // ─── حلقه بررسی زنده هر ۲ ثانیه ───
     if (window.__sl3SigTimer) clearInterval(window.__sl3SigTimer);
     window.__sl3SigTimer = setInterval(() => {
         const sig = readSigFromPage();
-        if (!sig) {
-            badge.innerHTML = '🔔 <b>SIG Notifier:</b> آماده (کلیک برای تنظیمات)';
-            return;
-        }
+        if (!sig) return;
         if (maxSeenSigId === null) {
             maxSeenSigId = sig.sigId;
             badge.innerHTML = `🔔 <b>SIG Notifier:</b> فعال (آخرین: SIG#${sig.sigId})`;
             return;
         }
-        // فقط زمانی که یک SIG جدیدتر از تمام سیگنال‌های قبلی روی کندل آخر شکل بگیرد:
         if (sig.sigId > maxSeenSigId && sig.sigId !== lastSentSigId && sig.sigDir !== 0) {
             maxSeenSigId = sig.sigId;
             lastSentSigId = sig.sigId;
@@ -315,14 +333,7 @@
             playBeep();
             sendTelegram(msg);
             sendWhatsApp(msg);
-            if (typeof GM_notification === 'function') {
-                GM_notification({
-                    title: `SIG#${sig.sigId} ${sig.sigDir === 1 ? 'BUY ▲' : 'SELL ▼'} @ ${sig.entry}`,
-                    text: `SL: ${sig.sl} | TP: ${sig.tp}`,
-                    timeout: 10000,
-                });
-            }
         }
-        badge.innerHTML = `🔔 <b>SIG Notifier:</b> فعال (آخرین: SIG#${maxSeenSigId} ${sig.sigDir === 1 ? '▲' : sig.sigDir === -1 ? '▼' : ''})`;
+        badge.innerHTML = `🔔 <b>SIG Notifier:</b> فعال (آخرین: SIG#${maxSeenSigId})`;
     }, 2000);
 })();
