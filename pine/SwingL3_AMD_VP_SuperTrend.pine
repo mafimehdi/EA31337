@@ -564,18 +564,30 @@ amdTxt = phaseName + (amdDir == 1 ? " (swept low → long bias)" : amdDir == -1 
 // ═════════════════════════ ③ VOLUME PROFILE ═════════════════════════
 f_vp(int lb, int rows, float vaPct, float hi, float lo) =>
     step = (hi - lo) / rows
-    vols = array.new_float(rows, 0.0)
+    vols  = array.new_float(rows, 0.0)
+    bVols = array.new_float(rows, 0.0)
+    sVols = array.new_float(rows, 0.0)
     if step > 0
         for i = 0 to lb - 1
             // distribute each bar's volume over the rows its range covers
             bh = high[i]
             bl = low[i]
+            bc = close[i]
+            bo = open[i]
             v  = nz(volume[i])
             b0 = math.max(0, math.min(rows - 1, int(math.floor((bl - lo) / step))))
             b1 = math.max(0, math.min(rows - 1, int(math.floor((bh - lo) / step))))
             share = v / (b1 - b0 + 1)
             for b = b0 to b1
                 array.set(vols, b, array.get(vols, b) + share)
+            if barstate.islast
+                rng = bh - bl
+                bFrac = bc > bo ? 1.0 : bc < bo ? 0.0 : (rng > 0 ? (bc - bl) / rng : 0.5)
+                bSh = share * bFrac
+                sSh = share * (1.0 - bFrac)
+                for b = b0 to b1
+                    array.set(bVols, b, array.get(bVols, b) + bSh)
+                    array.set(sVols, b, array.get(sVols, b) + sSh)
     pocIdx = array.indexof(vols, array.max(vols))
     total  = array.sum(vols)
     up = pocIdx
@@ -593,7 +605,7 @@ f_vp(int lb, int rows, float vaPct, float hi, float lo) =>
     poc = lo + step * (pocIdx + 0.5)
     vah = lo + step * (up + 1)
     val = lo + step * dn
-    [poc, vah, val, vols, lo, step]
+    [poc, vah, val, vols, bVols, sVols, lo, step]
 
 vpHi = ta.highest(high, vpLookback)
 vpLoRaw = ta.lowest(low, vpLookback)
@@ -602,15 +614,19 @@ float vpVAH = na
 float vpVAL = na
 float vpLo = na
 float vpStep = na
-float[] vpVols = array.new_float(vpRows, 0.0)
+float[] vpVols  = array.new_float(vpRows, 0.0)
+float[] vpBVols = array.new_float(vpRows, 0.0)
+float[] vpSVols = array.new_float(vpRows, 0.0)
 if bar_index >= vpLookback and bar_index > last_bar_index - vpCalcBars
-    [p_, h_, l_, v_, lo_, st_] = f_vp(vpLookback, vpRows, vpVA, vpHi, vpLoRaw)
-    vpPOC := p_
-    vpVAH := h_
-    vpVAL := l_
-    vpVols := v_
-    vpLo := lo_
-    vpStep := st_
+    [p_, h_, l_, v_, bv_, sv_, lo_, st_] = f_vp(vpLookback, vpRows, vpVA, vpHi, vpLoRaw)
+    vpPOC   := p_
+    vpVAH   := h_
+    vpVAL   := l_
+    vpVols  := v_
+    vpBVols := bv_
+    vpSVols := sv_
+    vpLo    := lo_
+    vpStep  := st_
 vpState = na(vpPOC) ? 0 : close > vpVAH ? 1 : close < vpVAL ? -1 : 0
 vpCrossUp = ta.crossover(close, vpVAH)
 vpCrossDn = ta.crossunder(close, vpVAL)
@@ -625,25 +641,6 @@ f_draw626() =>
     for bx in vpBoxes
         box.delete(bx)
     array.clear(vpBoxes)
-    bVols = array.new_float(vpRows, 0.0)
-    sVols = array.new_float(vpRows, 0.0)
-    if vpStep > 0
-        for i = 0 to vpLookback - 1
-            bh = high[i]
-            bl = low[i]
-            bc = close[i]
-            bo = open[i]
-            v  = nz(volume[i])
-            b0 = math.max(0, math.min(vpRows - 1, int(math.floor((bl - vpLo) / vpStep))))
-            b1 = math.max(0, math.min(vpRows - 1, int(math.floor((bh - vpLo) / vpStep))))
-            share = v / (b1 - b0 + 1)
-            rng = bh - bl
-            bFrac = bc > bo ? 1.0 : bc < bo ? 0.0 : (rng > 0 ? (bc - bl) / rng : 0.5)
-            bSh = share * bFrac
-            sSh = share * (1.0 - bFrac)
-            for b = b0 to b1
-                array.set(bVols, b, array.get(bVols, b) + bSh)
-                array.set(sVols, b, array.get(sVols, b) + sSh)
     mx = array.max(vpVols)
     for r = 0 to vpRows - 1
         v = array.get(vpVols, r)
@@ -654,8 +651,8 @@ f_draw626() =>
             inVA = top <= vpVAH + vpStep * 0.01 and bot >= vpVAL - vpStep * 0.01
             isPoc = vpPOC < top and vpPOC > bot
             c = isPoc ? color.new(color.yellow, 30) : inVA ? color.new(color.blue, 60) : color.new(color.gray, 75)
-            bv = array.get(bVols, r)
-            sv = array.get(sVols, r)
+            bv = array.get(vpBVols, r)
+            sv = array.get(vpSVols, r)
             bPct = int(math.round(bv / v * 100))
             sPct = 100 - bPct
             bStr = bv >= 1e6 ? str.tostring(bv / 1e6, "#.#") + "M" : bv >= 1e3 ? str.tostring(bv / 1e3, "#.#") + "K" : str.tostring(math.round(bv))
@@ -664,7 +661,7 @@ f_draw626() =>
             tCol = isPoc ? color.white : inVA ? color.rgb(235, 245, 255) : color.rgb(200, 205, 215)
             padY = vpStep * 4.0
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
-            array.push(vpBoxes, box.new(bar_index + 15, top + padY, bar_index + 15 + math.max(w, vpWidth) + 100, bot - padY, border_color=na, bgcolor=na, text=rTxt, text_size=size.tiny, text_color=tCol, text_halign=text.align_left, text_valign=text.align_center))
+            array.push(vpBoxes, box.new(bar_index + 15, top + padY, bar_index + 15 + math.max(w, vpWidth) + 60, bot - padY, border_color=na, bgcolor=na, text=rTxt, text_size=size.tiny, text_color=tCol, text_halign=text.align_left, text_valign=text.align_center))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
