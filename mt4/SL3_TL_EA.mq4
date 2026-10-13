@@ -23,7 +23,7 @@ input int     MaxOpenTrades     = 3;      // max simultaneous open SIG trades
 input bool    BlockOppositeOpen = true;   // do not open opposite trade while a trade is open
 input bool    CloseOnOpposite   = false;  // close open trades when an opposite SIG appears
 input int     MaxTradesPerDay   = 0;      // new entries per server day (0 = unlimited)
-input int     MaxLossStreakDay  = 0;      // stop trading for the day after N consecutive losses (0 = off)
+input int     MaxLossStreakDay  = 3;      // stop trading for the day after N consecutive losses (0 = off, 3 = Champion DD shield)
 input int     MaxSpreadPts      = 0;      // max allowed spread in points at entry (0 = off, e.g. 60 for live)
 input int     SlippagePts       = 30;
 input bool    ShowPanel         = true;
@@ -121,8 +121,9 @@ input double  MaxSlUsd          = 95.0;   // skip trade if stop farther than thi
 input double  MinSlUsd          = 12.5;   // minimum stop distance in $ price (0 = off)
 input bool    PadMinSl          = true;   // true = pad SL to MinSlUsd (Champion v2.10 mode), false = skip trade
 input double  MinSlAtr          = 0.0;    // skip trade if stop closer than this (x ATR, 0 = off)
-input double  WideSlUsd         = 0.0;    // if SL distance >= this $, cap open trades to MaxOpenWideSl (0 = off)
+input double  WideSlUsd         = 62.0;   // if SL distance >= this $, cap open trades to MaxOpenWideSl (0 = off, 62 = DD shield)
 input int     MaxOpenWideSl     = 1;      // max simultaneous open trades when SL >= WideSlUsd
+input bool    SmartClusterGuard = true;   // anti-drawdown stacking guard: limit 2nd/3rd trade on wide SL or loss streak
 input double  MaxRiskPct        = 0.0;    // skip trade if real risk after lot rounding exceeds this % (0 = off)
 input double  BeTriggerR        = 0.0;    // move SL to Break-Even (+BeLockUsd) at this R profit (0 = off)
 input double  BeLockUsd         = 0.50;   // $ locked above/below entry when Break-Even triggers
@@ -1207,7 +1208,7 @@ void ExecuteSigOrder(int dir, double rawSL, double rawTP, string commentTag)
    if (CloseOnOpposite && n > 0 && dir != odir) { CloseAll(); n = CountOpen(odir); }
    if (BlockOppositeOpen && n > 0 && dir != odir) { lastMsg = "SIG skipped: opposite trade already open"; return; }
    if (n >= MaxOpenTrades) { lastMsg = "SIG skipped: MaxOpenTrades (" + IntegerToString(MaxOpenTrades) + ") reached"; return; }
-   double lastP = 0; int streak = LossStreakToday(lastP);
+   double lastP = 0; int streakAll = 0; int streak = LossStreakToday(lastP, streakAll);
    if (MaxLossStreakDay > 0 && streak >= MaxLossStreakDay) { lastMsg = "SIG skipped: loss streak " + IntegerToString(streak); return; }
    if (MaxTradesPerDay > 0 && TradesToday() >= MaxTradesPerDay) { lastMsg = "SIG skipped: daily limit reached"; return; }
    if (!TradeTimeOK(TimeCurrent())) { lastMsg = "SIG skipped: outside trading hours"; return; }
@@ -1237,7 +1238,24 @@ void ExecuteSigOrder(int dir, double rawSL, double rawTP, string commentTag)
       }
       else { lastMsg = "SIG skipped: SL $" + DoubleToString(dist, 1) + " < MinSlUsd $" + DoubleToString(minReq, 1); return; }
    }
-   if (WideSlUsd > 0 && dist >= WideSlUsd && n >= MaxOpenWideSl) { lastMsg = "SIG skipped: Wide SL $" + DoubleToString(dist, 1) + " cap (" + IntegerToString(MaxOpenWideSl) + " open)"; return; }
+   if (SmartClusterGuard && n >= MaxOpenWideSl)
+   {
+      double l1RngCur = (lastL1Hi != EMPTY_VALUE && lastL1Lo != EMPTY_VALUE) ? MathAbs(lastL1Hi - lastL1Lo) : 0.0;
+      double wCap     = (WideSlUsd > 0) ? WideSlUsd : 62.0;
+      bool bigWave    = (ATR[1] >= 30.0) || (streakAll <= 1 && l1RngCur >= 70.0 && dist <= 1.15 * l1RngCur);
+      bool okNormal   = (streakAll == 0 && dist < wCap);
+      bool okAfter1   = (streakAll == 1 && dist < wCap && amdState != 0 && vpState != 0);
+      if (!okNormal && !okAfter1 && !bigWave)
+      {
+         lastMsg = "SIG skipped: SmartClusterGuard (open=" + IntegerToString(n) + ", streak=" + IntegerToString(streakAll) + ", SL$=" + DoubleToString(dist, 1) + ")";
+         return;
+      }
+   }
+   else if (WideSlUsd > 0 && dist >= WideSlUsd && n >= MaxOpenWideSl)
+   {
+      lastMsg = "SIG skipped: Wide SL $" + DoubleToString(dist, 1) + " cap (" + IntegerToString(MaxOpenWideSl) + " open)";
+      return;
+   }
 
    double ordTP = 0;
    if (ExitModel == 1 && rawTP != EMPTY_VALUE && rawTP > 0)
@@ -1315,15 +1333,15 @@ int TradesToday()
       if (OrderSelect(i, SELECT_BY_POS, MODE_HISTORY) && OrderSymbol() == Symbol() && OrderMagicNumber() == Magic && OrderType() <= OP_SELL && OrderOpenTime() >= d0 && StringFind(OrderComment(), "from #") < 0) n++;
    return n;
 }
-int LossStreakToday(double &lastProfit)
+int LossStreakToday(double &lastProfit, int &streakAll)
 {
-   datetime d0 = iTime(NULL, PERIOD_D1, 0); int streak = 0; lastProfit = 0;
+   datetime d0 = iTime(NULL, PERIOD_D1, 0); int streak = 0; streakAll = 0; lastProfit = 0;
    int idx[]; datetime ct[]; int n = 0;
    ArrayResize(idx, OrdersHistoryTotal()); ArrayResize(ct, OrdersHistoryTotal());
    for (int i = 0; i < OrdersHistoryTotal(); i++)
       if (OrderSelect(i, SELECT_BY_POS, MODE_HISTORY) && OrderSymbol() == Symbol() && OrderMagicNumber() == Magic && OrderType() <= OP_SELL) { idx[n] = i; ct[n] = OrderCloseTime(); n++; }
-   bool done = false;
-   for (int k = 0; k < n && !done; k++)
+   bool doneDay = false, doneAll = false;
+   for (int k = 0; k < n && (!doneDay || !doneAll); k++)
    {
       int best = -1; datetime bt = 0;
       for (int j = 0; j < n; j++) if (idx[j] >= 0 && ct[j] > bt) { bt = ct[j]; best = j; }
@@ -1332,9 +1350,17 @@ int LossStreakToday(double &lastProfit)
       {
          double p = OrderProfit() + OrderSwap() + OrderCommission();
          if (k == 0) lastProfit = p;
-         if (OrderCloseTime() < d0) done = true;
-         else if (p < -0.01) streak++;
-         else done = true;
+         if (!doneDay)
+         {
+            if (OrderCloseTime() < d0) doneDay = true;
+            else if (p < -0.01) streak++;
+            else doneDay = true;
+         }
+         if (!doneAll)
+         {
+            if (p < -0.01) streakAll++;
+            else doneAll = true;
+         }
       }
       idx[best] = -1;
    }
