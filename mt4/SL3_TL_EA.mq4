@@ -11,7 +11,7 @@
 //|   - Optional Break-Even & Trailing on Structural TP trades        |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "2.90"
+#property version   "2.91"
 
 //==================== INPUTS ====================
 input string  s0 = "==== General & Risk ====";
@@ -1209,7 +1209,8 @@ void ExecuteSigOrder(int dir, double rawSL, double rawTP, string commentTag)
    if (BlockOppositeOpen && n > 0 && dir != odir) { lastMsg = "SIG skipped: opposite trade already open"; return; }
    if (n >= MaxOpenTrades) { lastMsg = "SIG skipped: MaxOpenTrades (" + IntegerToString(MaxOpenTrades) + ") reached"; return; }
    double lastP = 0; int streakAll = 0; int streak = LossStreakToday(lastP, streakAll);
-   if (MaxLossStreakDay > 0 && streak >= MaxLossStreakDay) { lastMsg = "SIG skipped: loss streak " + IntegerToString(streak); return; }
+   int effMaxStreakDay = (MaxLossStreakDay > 0) ? MaxLossStreakDay : (SmartClusterGuard ? 3 : 0);
+   if (effMaxStreakDay > 0 && streak >= effMaxStreakDay) { lastMsg = "SIG skipped: loss streak " + IntegerToString(streak); return; }
    if (MaxTradesPerDay > 0 && TradesToday() >= MaxTradesPerDay) { lastMsg = "SIG skipped: daily limit reached"; return; }
    if (!TradeTimeOK(TimeCurrent())) { lastMsg = "SIG skipped: outside trading hours"; return; }
 
@@ -1534,6 +1535,7 @@ int OnInit()
    lastWinCloseBuy = 0; lastWinCloseSell = 0;
    lastWinOpenBuy  = 0; lastWinOpenSell  = 0;
    if (Period() != PERIOD_M15) Print("SL3 SIG EA: designed for M15");
+   Print("[SL3-INIT] v2.91 Drawdown Shield | SmartClusterGuard=", SmartClusterGuard, " | WideSlUsd=", DoubleToString((WideSlUsd > 0 ? WideSlUsd : 62.0), 1), " | MaxLossStreakDay=", (MaxLossStreakDay > 0 ? MaxLossStreakDay : (SmartClusterGuard ? 3 : 0)));
    return INIT_SUCCEEDED;
 }
 void OnDeinit(const int r)
