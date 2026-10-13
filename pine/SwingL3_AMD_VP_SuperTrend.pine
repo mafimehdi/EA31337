@@ -625,6 +625,25 @@ f_draw626() =>
     for bx in vpBoxes
         box.delete(bx)
     array.clear(vpBoxes)
+    bVols = array.new_float(vpRows, 0.0)
+    sVols = array.new_float(vpRows, 0.0)
+    if vpStep > 0
+        for i = 0 to vpLookback - 1
+            bh = high[i]
+            bl = low[i]
+            bc = close[i]
+            bo = open[i]
+            v  = nz(volume[i])
+            b0 = math.max(0, math.min(vpRows - 1, int(math.floor((bl - vpLo) / vpStep))))
+            b1 = math.max(0, math.min(vpRows - 1, int(math.floor((bh - vpLo) / vpStep))))
+            share = v / (b1 - b0 + 1)
+            rng = bh - bl
+            bFrac = bc > bo ? 1.0 : bc < bo ? 0.0 : (rng > 0 ? (bc - bl) / rng : 0.5)
+            bSh = share * bFrac
+            sSh = share * (1.0 - bFrac)
+            for b = b0 to b1
+                array.set(bVols, b, array.get(bVols, b) + bSh)
+                array.set(sVols, b, array.get(sVols, b) + sSh)
     mx = array.max(vpVols)
     for r = 0 to vpRows - 1
         v = array.get(vpVols, r)
@@ -635,7 +654,16 @@ f_draw626() =>
             inVA = top <= vpVAH + vpStep * 0.01 and bot >= vpVAL - vpStep * 0.01
             isPoc = vpPOC < top and vpPOC > bot
             c = isPoc ? color.new(color.yellow, 30) : inVA ? color.new(color.blue, 60) : color.new(color.gray, 75)
+            bv = array.get(bVols, r)
+            sv = array.get(sVols, r)
+            bPct = int(math.round(bv / v * 100))
+            sPct = 100 - bPct
+            bStr = bv >= 1e6 ? str.tostring(bv / 1e6, "#.#") + "M" : bv >= 1e3 ? str.tostring(bv / 1e3, "#.#") + "K" : str.tostring(math.round(bv))
+            sStr = sv >= 1e6 ? str.tostring(sv / 1e6, "#.#") + "M" : sv >= 1e3 ? str.tostring(sv / 1e3, "#.#") + "K" : str.tostring(math.round(sv))
+            rTxt = "B:" + bStr + " (" + str.tostring(bPct) + "%) | S:" + sStr + " (" + str.tostring(sPct) + "%)"
+            tCol = isPoc ? color.black : inVA ? color.white : color.new(color.white, 15)
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
+            array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + math.max(w, vpWidth), bot, border_color=na, bgcolor=na, text=rTxt, text_size=size.tiny, text_color=tCol, text_halign=text.align_left))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
