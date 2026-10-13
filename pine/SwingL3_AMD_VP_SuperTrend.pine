@@ -637,10 +637,14 @@ plot(vpVAH, "VAH", color=color.new(color.aqua, 30), style=plot.style_stepline)
 plot(vpVAL, "VAL", color=color.new(color.fuchsia, 30), style=plot.style_stepline)
 
 var box[] vpBoxes = array.new_box()
+var label[] vpLbls = array.new_label()
 f_draw626() =>
     for bx in vpBoxes
         box.delete(bx)
     array.clear(vpBoxes)
+    for lb in vpLbls
+        label.delete(lb)
+    array.clear(vpLbls)
     mx = array.max(vpVols)
     for r = 0 to vpRows - 1
         v = array.get(vpVols, r)
@@ -657,11 +661,10 @@ f_draw626() =>
             sPct = 100 - bPct
             bStr = bv >= 1e6 ? str.tostring(bv / 1e6, "#.#") + "M" : bv >= 1e3 ? str.tostring(bv / 1e3, "#.#") + "K" : str.tostring(math.round(bv))
             sStr = sv >= 1e6 ? str.tostring(sv / 1e6, "#.#") + "M" : sv >= 1e3 ? str.tostring(sv / 1e3, "#.#") + "K" : str.tostring(math.round(sv))
-            rTxt = "B:" + bStr + " (" + str.tostring(bPct) + "%) | S:" + sStr + " (" + str.tostring(sPct) + "%)"
-            tCol = isPoc ? color.white : inVA ? color.rgb(235, 245, 255) : color.rgb(200, 205, 215)
-            padY = vpStep * 4.0
+            rTxt = "B:" + bStr + "(" + str.tostring(bPct) + "%) | S:" + sStr + "(" + str.tostring(sPct) + "%)"
+            tCol = isPoc ? color.yellow : inVA ? color.white : color.rgb(210, 215, 225)
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
-            array.push(vpBoxes, box.new(bar_index + 15, top + padY, bar_index + 15 + math.max(w, vpWidth) + 60, bot - padY, border_color=na, bgcolor=na, text=rTxt, text_size=size.tiny, text_color=tCol, text_halign=text.align_left, text_valign=text.align_center))
+            array.push(vpLbls, label.new(bar_index + 15, (top + bot) * 0.5, rTxt, style=label.style_label_left, color=color.new(color.black, 100), textcolor=tCol, size=size.tiny))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
