@@ -661,9 +661,10 @@ f_draw626() =>
             bStr = bv >= 1e6 ? str.tostring(bv / 1e6, "#.#") + "M" : bv >= 1e3 ? str.tostring(bv / 1e3, "#.#") + "K" : str.tostring(math.round(bv))
             sStr = sv >= 1e6 ? str.tostring(sv / 1e6, "#.#") + "M" : sv >= 1e3 ? str.tostring(sv / 1e3, "#.#") + "K" : str.tostring(math.round(sv))
             rTxt = "B:" + bStr + " (" + str.tostring(bPct) + "%) | S:" + sStr + " (" + str.tostring(sPct) + "%)"
-            tCol = isPoc ? color.black : inVA ? color.white : color.new(color.white, 15)
+            tCol = isPoc ? color.white : inVA ? color.rgb(235, 245, 255) : color.rgb(200, 205, 215)
+            padY = vpStep * 4.0
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
-            array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + math.max(w, vpWidth), bot, border_color=na, bgcolor=na, text=rTxt, text_size=size.tiny, text_color=tCol, text_halign=text.align_left))
+            array.push(vpBoxes, box.new(bar_index + 15, top + padY, bar_index + 15 + math.max(w, vpWidth) + 100, bot - padY, border_color=na, bgcolor=na, text=rTxt, text_size=size.tiny, text_color=tCol, text_halign=text.align_left, text_valign=text.align_center))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
