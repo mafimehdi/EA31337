@@ -638,13 +638,19 @@ plot(vpVAL, "VAL", color=color.new(color.fuchsia, 30), style=plot.style_stepline
 
 var box[] vpBoxes = array.new_box()
 var label[] vpLbls = array.new_label()
+// ROOT CAUSE FIX: boxes accept "bar_index + N" (future) coordinates, but label / line objects anchored on a
+// non-existent future bar are NOT rendered by TradingView (the drawing is created but stays invisible).
+// The row text is therefore anchored on the LAST REAL BAR (same xloc.bar_index mechanism used by every other
+// label of this script that renders correctly) and the label body extends to the right (style_label_left),
+// i.e. over the histogram bar of that row.
 f_draw626() =>
     for bx in vpBoxes
         box.delete(bx)
     array.clear(vpBoxes)
-    for lb in vpLbls
-        label.delete(lb)
+    for vpL in vpLbls
+        label.delete(vpL)
     array.clear(vpLbls)
+    xTxt = bar_index
     mx = array.max(vpVols)
     for r = 0 to vpRows - 1
         v = array.get(vpVols, r)
@@ -662,9 +668,9 @@ f_draw626() =>
             bStr = bv >= 1e6 ? str.tostring(bv / 1e6, "#.#") + "M" : bv >= 1e3 ? str.tostring(bv / 1e3, "#.#") + "K" : str.tostring(math.round(bv))
             sStr = sv >= 1e6 ? str.tostring(sv / 1e6, "#.#") + "M" : sv >= 1e3 ? str.tostring(sv / 1e3, "#.#") + "K" : str.tostring(math.round(sv))
             rTxt = "B:" + bStr + "(" + str.tostring(bPct) + "%) | S:" + sStr + "(" + str.tostring(sPct) + "%)"
-            tCol = isPoc ? color.yellow : inVA ? color.white : color.rgb(210, 215, 225)
+            tCol = isPoc ? color.black : inVA ? color.white : color.rgb(210, 215, 225)
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
-            array.push(vpLbls, label.new(bar_index + 15, (top + bot) * 0.5, rTxt, style=label.style_label_left, color=color.new(color.black, 100), textcolor=tCol, size=size.tiny))
+            array.push(vpLbls, label.new(xTxt, (top + bot) * 0.5, rTxt, style=label.style_label_left, color=color.new(color.black, 100), textcolor=tCol, size=size.tiny, textalign=text.align_left))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
