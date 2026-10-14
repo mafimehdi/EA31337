@@ -367,7 +367,6 @@ if showL3 and barstate.islast
 // ═════════════════════════ ② AMD (Power of 3) ═════════════════════════
 inAcc  = not na(time(timeframe.period, amdSess, amdTz))
 accStart = inAcc and not inAcc[1]
-accEnd   = not inAcc and inAcc[1]
 htfNew   = timeframe.change(amdHtf)
 var float accHi = na
 var float accLo = na
@@ -712,7 +711,6 @@ type Zone
 
 var array<Zone> zones = array.new<Zone>()
 body = math.abs(close - open)
-dispRecent = ta.highest(body, 3) >= obDispAtr * atr14
 bosL2UpX = ta.crossover(close, lastH2)
 bosL2DnX = ta.crossunder(close, lastL2)
 structUp = (bosL2UpX and not na(lastH2)) or bosUp
@@ -1270,10 +1268,7 @@ tlTxt = tlSessName + ": " + tlPat + (tlCarryR or tlCarryS ? " (carried " + (tlCa
 
 var table tb = table.new(posT, 3, 16, bgcolor=color.new(#131722, 10), border_color=color.new(color.gray, 70), border_width=1, frame_color=color.gray, frame_width=1)
 fmt(float v) => na(v) ? "—" : str.tostring(v, format.mintick)
-faStatus(string x) => x == "PENDING" ? "PENDING" : x == "FILLED" ? "FILLED" : x == "EXPIRED" ? "EXPIRED" : x == "CANCELLED (OB broken)" ? "CANCELLED (OB broken)" : x == "CANCELLED (bias flip)" ? "CANCELLED (bias flip)" : x
-faExit(string x) => x == "" ? "—" : x == "Stop" ? "Stop" : x == "TP2" ? "TP2" : x == "Signal flip" ? "Signal flip" : x == "Stop (same bar)" ? "Stop (same bar)" : x
 suggTxt() => pos == 1 ? "HOLD LONG" : pos == -1 ? "HOLD SHORT" : longOK ? "LOOK FOR LONG" : shortOK ? "LOOK FOR SHORT" : "WAIT"
-faTrig(string x) => x == "Confluence" ? "Confluence" : x == "OB retest" ? "OB retest" : x
 fmtD(int last, float sum, int n) => (na(last) ? "—" : str.tostring(last)) + (n > 0 ? " (avg " + str.tostring(sum / n, "#.#") + ")" : "")
 f_zTxt(Zone z) =>
     na(z) ? "—" : fmt(z.bot) + " – " + fmt(z.top) + (z.state == 0 ? "  fresh" : "  touched") + (f_vpConf(z) ? "  +VP" : "")
@@ -1340,7 +1335,6 @@ f_draw1247() =>
                 p2 := p1 + rk * (rr2 - rr1)
             if not dirL and p2 >= p1
                 p2 := p1 - rk * (rr2 - rr1)
-    tpTag = pos == 0 and tpMode == "First obstacle" and rk > 0 and not na(p1) ? str.tostring(math.abs(p1 - pe) / rk, "#.#") + "R / " + str.tostring(math.abs(p2 - pe) / rk, "#.#") + "R" : str.tostring(rr1) + "R / " + str.tostring(rr2) + "R"
     row(10, "Bull OB (" + str.tostring(nBull) + ")", na(zLa) ? (nBull > 0 ? "all above price" : "no active OB") : f_zTxt(zLa), na(zLa) ? "none" : f_zoneOK(zLa) ? "demand ✓" : "premium ✗", na(zLa) ? color.new(cNeu, 60) : f_zoneOK(zLa) ? color.new(cBull, 30) : color.new(cBull, 70))
     row(11, "Bear OB (" + str.tostring(nBear) + ")", na(zSa) ? (nBear > 0 ? "all below price" : "no active OB") : f_zTxt(zSa), na(zSa) ? "none" : f_zoneOK(zSa) ? "supply ✓" : "discount ✗", na(zSa) ? color.new(cNeu, 60) : f_zoneOK(zSa) ? color.new(cBear, 30) : color.new(cBear, 70))
     htfTxt = "TF " + htfTf + "  H " + fmt(htfH) + (not na(htfH) and close > htfH ? " (broken)" : "") + " / L " + fmt(htfL) + (not na(htfL) and close < htfL ? " (broken)" : "")
@@ -1431,7 +1425,6 @@ bool planBuy = false
 bool planSell = false
 bool planDone = false
 bool planEnd = false
-string endTxt = ""
 
 // local 15m structure (L2 + L1): higher lows block SELL, lower highs block BUY
 l2Lo0 = f_last(l2P, 0)
