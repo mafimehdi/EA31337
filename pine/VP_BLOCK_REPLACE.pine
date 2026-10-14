@@ -1,0 +1,113 @@
+// ═════════════════════════ ③ VOLUME PROFILE ═════════════════════════
+f_vp(int lb, int rows, float vaPct, float hi, float lo) =>
+    step = (hi - lo) / rows
+    vols  = array.new_float(rows, 0.0)
+    bVols = array.new_float(rows, 0.0)
+    sVols = array.new_float(rows, 0.0)
+    if step > 0
+        for i = 0 to lb - 1
+            // distribute each bar's volume over the rows its range covers
+            bh = high[i]
+            bl = low[i]
+            bc = close[i]
+            bo = open[i]
+            v  = nz(volume[i])
+            b0 = math.max(0, math.min(rows - 1, int(math.floor((bl - lo) / step))))
+            b1 = math.max(0, math.min(rows - 1, int(math.floor((bh - lo) / step))))
+            share = v / (b1 - b0 + 1)
+            for b = b0 to b1
+                array.set(vols, b, array.get(vols, b) + share)
+            if barstate.islast
+                rng = bh - bl
+                bFrac = bc > bo ? 1.0 : bc < bo ? 0.0 : (rng > 0 ? (bc - bl) / rng : 0.5)
+                bSh = share * bFrac
+                sSh = share * (1.0 - bFrac)
+                for b = b0 to b1
+                    array.set(bVols, b, array.get(bVols, b) + bSh)
+                    array.set(sVols, b, array.get(sVols, b) + sSh)
+    pocIdx = array.indexof(vols, array.max(vols))
+    total  = array.sum(vols)
+    up = pocIdx
+    dn = pocIdx
+    acc = array.get(vols, pocIdx)
+    while acc < total * vaPct and (up < rows - 1 or dn > 0)
+        vUp = up < rows - 1 ? array.get(vols, up + 1) : -1.0
+        vDn = dn > 0 ? array.get(vols, dn - 1) : -1.0
+        if vUp >= vDn
+            up += 1
+            acc += vUp
+        else
+            dn -= 1
+            acc += vDn
+    poc = lo + step * (pocIdx + 0.5)
+    vah = lo + step * (up + 1)
+    val = lo + step * dn
+    [poc, vah, val, vols, bVols, sVols, lo, step]
+
+vpHi = ta.highest(high, vpLookback)
+vpLoRaw = ta.lowest(low, vpLookback)
+float vpPOC = na
+float vpVAH = na
+float vpVAL = na
+float vpLo = na
+float vpStep = na
+float[] vpVols  = array.new_float(vpRows, 0.0)
+float[] vpBVols = array.new_float(vpRows, 0.0)
+float[] vpSVols = array.new_float(vpRows, 0.0)
+if bar_index >= vpLookback and bar_index > last_bar_index - vpCalcBars
+    [p_, h_, l_, v_, bv_, sv_, lo_, st_] = f_vp(vpLookback, vpRows, vpVA, vpHi, vpLoRaw)
+    vpPOC   := p_
+    vpVAH   := h_
+    vpVAL   := l_
+    vpVols  := v_
+    vpBVols := bv_
+    vpSVols := sv_
+    vpLo    := lo_
+    vpStep  := st_
+vpState = na(vpPOC) ? 0 : close > vpVAH ? 1 : close < vpVAL ? -1 : 0
+vpCrossUp = ta.crossover(close, vpVAH)
+vpCrossDn = ta.crossunder(close, vpVAL)
+vpTxt = na(vpPOC) ? "Not calculated" : close > vpVAH ? "Above VAH (acceptance ↑)" : close < vpVAL ? "Below VAL (acceptance ↓)" : close > vpPOC ? "Inside VA, above POC" : "Inside VA, below POC"
+
+plot(vpPOC, "POC", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_stepline)
+plot(vpVAH, "VAH", color=color.new(color.aqua, 30), style=plot.style_stepline)
+plot(vpVAL, "VAL", color=color.new(color.fuchsia, 30), style=plot.style_stepline)
+
+var box[] vpBoxes = array.new_box()
+var label[] vpLbls = array.new_label()
+// ROOT CAUSE FIX: boxes accept "bar_index + N" (future) coordinates, but label / line objects anchored on a
+// non-existent future bar are NOT rendered by TradingView (the drawing is created but stays invisible).
+// The row text is therefore anchored on the LAST REAL BAR (same xloc.bar_index mechanism used by every other
+// label of this script that renders correctly) and the label body extends to the right (style_label_left),
+// i.e. over the histogram bar of that row.
+f_draw626() =>
+    for bx in vpBoxes
+        box.delete(bx)
+    array.clear(vpBoxes)
+    for vpL in vpLbls
+        label.delete(vpL)
+    array.clear(vpLbls)
+    xTxt = bar_index
+    mx = array.max(vpVols)
+    for r = 0 to vpRows - 1
+        v = array.get(vpVols, r)
+        w = mx > 0 ? int(math.round(v / mx * vpWidth)) : 0
+        if w > 0
+            top = vpLo + vpStep * (r + 1)
+            bot = vpLo + vpStep * r
+            inVA = top <= vpVAH + vpStep * 0.01 and bot >= vpVAL - vpStep * 0.01
+            isPoc = vpPOC < top and vpPOC > bot
+            c = isPoc ? color.new(color.yellow, 30) : inVA ? color.new(color.blue, 60) : color.new(color.gray, 75)
+            bv = array.get(vpBVols, r)
+            sv = array.get(vpSVols, r)
+            bPct = int(math.round(bv / v * 100))
+            sPct = 100 - bPct
+            bStr = bv >= 1e6 ? str.tostring(bv / 1e6, "#.#") + "M" : bv >= 1e3 ? str.tostring(bv / 1e3, "#.#") + "K" : str.tostring(math.round(bv))
+            sStr = sv >= 1e6 ? str.tostring(sv / 1e6, "#.#") + "M" : sv >= 1e3 ? str.tostring(sv / 1e3, "#.#") + "K" : str.tostring(math.round(sv))
+            rTxt = "B:" + bStr + "(" + str.tostring(bPct) + "%) | S:" + sStr + "(" + str.tostring(sPct) + "%)"
+            tCol = isPoc ? color.black : inVA ? color.white : color.rgb(210, 215, 225)
+            array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
+            array.push(vpLbls, label.new(xTxt, (top + bot) * 0.5, rTxt, style=label.style_label_left, color=color.new(color.black, 100), textcolor=tCol, size=size.tiny, textalign=text.align_left))
+    0
+if showVP and barstate.islast and not na(vpPOC)
+    f_draw626()
