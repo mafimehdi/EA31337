@@ -78,43 +78,68 @@ paint();
 
 
 class H(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+    """Minimal but preview-proxy friendly: answers GET *and* HEAD for every route."""
 
-    def _send(self, body, ctype, fname=None):
-        self.send_response(200)
+    protocol_version = "HTTP/1.1"
+    server_version = "PineViewer/1.0"
+
+    def _send(self, body, ctype, fname=None, head_only=False, code=200):
+        self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Accept-Ranges", "none")
         if fname:
             self.send_header("Content-Disposition", 'attachment; filename="%s"' % fname)
         self.end_headers()
-        self.wfile.write(body)
+        if not head_only:
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    def _route(self, head_only=False):
+        p = self.path.split("?")[0].rstrip("/") or "/"
+        if p in ("/", "/index.html"):
+            full = self._read(PINE)
+            blk = self._read(BLOCK)
+            body = (PAGE.replace("__FULL__", json.dumps(full)).replace("__BLOCK__", json.dumps(blk))).encode("utf-8")
+            self._send(body, "text/html; charset=utf-8", head_only=head_only)
+        elif p in ("/download.pine", "/raw"):
+            self._send(self._read(PINE).encode("utf-8"), "text/plain; charset=utf-8",
+                       "SwingL3_AMD_VP_SuperTrend.pine" if p == "/download.pine" else None, head_only)
+        elif p == "/download.block":
+            self._send(self._read(BLOCK).encode("utf-8"), "text/plain; charset=utf-8", "VP_BLOCK_REPLACE.pine", head_only)
+        elif p == "/pack.zip":
+            with open(ZIP, "rb") as fh:
+                self._send(fh.read(), "application/zip", "SwingL3_AMD_VP_SuperTrend_Pack.zip", head_only)
+        elif p == "/guide":
+            self._send(self._read(GUIDE).encode("utf-8"), "text/markdown; charset=utf-8", "GUIDE_FA.md", head_only)
+        elif p == "/favicon.ico":
+            self._send(b"", "image/x-icon", None, head_only, 204)
+        elif p == "/healthz":
+            self._send(b"ok", "text/plain; charset=utf-8", None, head_only)
+        else:
+            self._send(b"not found", "text/plain; charset=utf-8", None, head_only, 404)
+
+    def do_GET(self):
+        self._route(False)
+
+    def do_HEAD(self):
+        self._route(True)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _read(self, path):
         with open(path, encoding="utf-8") as fh:
             return fh.read()
 
-    def do_GET(self):
-        p = self.path.split("?")[0]
-        if p in ("/", "/index.html"):
-            full = self._read(PINE)
-            blk = self._read(BLOCK)
-            body = (PAGE.replace("__FULL__", json.dumps(full)).replace("__BLOCK__", json.dumps(blk))).encode("utf-8")
-            self._send(body, "text/html; charset=utf-8")
-        elif p == "/download.pine":
-            self._send(self._read(PINE).encode("utf-8"), "text/plain; charset=utf-8", "SwingL3_AMD_VP_SuperTrend.pine")
-        elif p == "/download.block":
-            self._send(self._read(BLOCK).encode("utf-8"), "text/plain; charset=utf-8", "VP_BLOCK_REPLACE.pine")
-        elif p == "/raw":
-            self._send(self._read(PINE).encode("utf-8"), "text/plain; charset=utf-8")
-        elif p == "/pack.zip":
-            with open(ZIP, "rb") as fh:
-                self._send(fh.read(), "application/zip", "SwingL3_AMD_VP_SuperTrend_Pack.zip")
-        elif p == "/guide":
-            self._send(self._read(GUIDE).encode("utf-8"), "text/markdown; charset=utf-8", "GUIDE_FA.md")
-        else:
-            self._send(b"not found", "text/plain; charset=utf-8")
 
     def log_message(self, *a):
         pass
