@@ -1282,15 +1282,25 @@ suggTxt() => pos == 1 ? "HOLD LONG" : pos == -1 ? "HOLD SHORT" : longOK ? "LOOK 
 fmtD(int last, float sum, int n) => (na(last) ? "—" : str.tostring(last)) + (n > 0 ? " (avg " + str.tostring(sum / n, "#.#") + ")" : "")
 f_zTxt(Zone z) =>
     na(z) ? "—" : fmt(z.bot) + " – " + fmt(z.top) + (z.state == 0 ? "  fresh" : "  touched") + (f_vpConf(z) ? "  +VP" : "")
+f_wrap(string s, int n) =>
+    string o = s
+    if str.length(s) > n
+        int cut = na
+        for k = n to 1
+            if na(cut) and str.substring(s, k, k + 1) == " "
+                cut := k
+        if not na(cut)
+            o := str.substring(s, 0, cut) + "\n" + str.substring(s, cut + 1)
+    o
 row(int r, string a, string b, string c, color col) =>
-    table.cell(tb, 0, r, a, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 1, r, b, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 2, r, c, text_color=color.white, bgcolor=col, text_size=szT)
+    table.cell(tb, 0, r, a, width=130, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 1, r, f_wrap(b, 36), width=190, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 2, r, c, width=90, text_color=color.white, bgcolor=col, text_size=szT)
 
 f_draw1247() =>
-    table.cell(tb, 0, 0, "Module", text_color=color.gray, text_size=szT)
-    table.cell(tb, 1, 0, "Reading", text_color=color.gray, text_size=szT)
-    table.cell(tb, 2, 0, "Verdict", text_color=color.gray, text_size=szT)
+    table.cell(tb, 0, 0, "Module", width=130, text_color=color.gray, text_size=szT)
+    table.cell(tb, 1, 0, "Reading", width=190, text_color=color.gray, text_size=szT)
+    table.cell(tb, 2, 0, "Verdict", width=90, text_color=color.gray, text_size=szT)
     row(1, structSrc == "Swing L3" ? "Swing L3 ★" : "Swing L3", swingTxt, txtOf(swingState), colOf(swingState))
     row(2, "L3 High / Low", fmt(lastH3) + " / " + fmt(lastL3), "L2: " + fmt(lastH2) + " / " + fmt(lastL2), color.new(cNeu, 60))
     row(3, "AMD", amdTxt, txtOf(amdState), colOf(amdState))
@@ -1348,13 +1358,13 @@ f_draw1247() =>
     row(10, "Bull OB (" + str.tostring(nBull) + ")", na(zLa) ? (nBull > 0 ? "all above price" : "no active OB") : f_zTxt(zLa), na(zLa) ? "none" : f_zoneOK(zLa) ? "demand ✓" : "premium ✗", na(zLa) ? color.new(cNeu, 60) : f_zoneOK(zLa) ? color.new(cBull, 30) : color.new(cBull, 70))
     row(11, "Bear OB (" + str.tostring(nBear) + ")", na(zSa) ? (nBear > 0 ? "all below price" : "no active OB") : f_zTxt(zSa), na(zSa) ? "none" : f_zoneOK(zSa) ? "supply ✓" : "discount ✗", na(zSa) ? color.new(cNeu, 60) : f_zoneOK(zSa) ? color.new(cBear, 30) : color.new(cBear, 70))
     htfTxt = "TF " + htfTf + "  H " + fmt(htfH) + (not na(htfH) and close > htfH ? " (broken)" : "") + " / L " + fmt(htfL) + (not na(htfL) and close < htfL ? " (broken)" : "")
-    table.cell(tb, 0, 12, structSrc == "HTF structure" ? "HTF structure ★" : "HTF structure", text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 1, 12, htfTxt, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 2, 12, txtOf(int(nz(htfDir))), text_color=color.white, bgcolor=colOf(int(nz(htfDir))), text_size=szT)
+    table.cell(tb, 0, 12, structSrc == "HTF structure" ? "HTF structure ★" : "HTF structure", width=130, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 1, 12, htfTxt, width=190, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 2, 12, txtOf(int(nz(htfDir))), width=90, text_color=color.white, bgcolor=colOf(int(nz(htfDir))), text_size=szT)
     delTxt = "L1 " + str.tostring(pivLen) + " | L2 " + fmtD(dL2last, dL2sum, dL2n) + " | L3 " + fmtD(dL3last, dL3sum, dL3n)
-    table.cell(tb, 0, 13, "Delay (bars)", text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 1, 13, delTxt, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 2, 13, "last (avg)", text_color=color.white, bgcolor=color.new(cNeu, 60), text_size=szT)
+    table.cell(tb, 0, 13, "Delay (bars)", width=130, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 1, 13, delTxt, width=190, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 2, 13, "last (avg)", width=90, text_color=color.white, bgcolor=color.new(cNeu, 60), text_size=szT)
     row(14, "Institutional", (instActive ? instTxt : "no fresh footprint") + "  |  " + cotTxt + (not na(gcRel) ? "  |  GC vol " + str.tostring(gcRel, "#.#") + "×" : ""), txtOf(instState), colOf(instState))
     row(15, "Trendlines (session)", tlOn ? tlTxt : "off", txtOf(tlState), colOf(tlState))
     0
@@ -1940,12 +1950,12 @@ if barstate.isconfirmed and goNew and not na(goTP) and not na(goSL) and array.si
 f_stTxt(int n, int w, float r) => n == 0 ? "no trades yet" : str.tostring(n) + " trades  ·  win " + str.tostring(100.0 * w / n, "#") + "%  ·  avg " + str.tostring(r / n, "#.##") + "R  ·  total " + str.tostring(r, "#.#") + "R"
 f_drawSig() =>
     sN = array.size(sgDir)
-    table.cell(tb, 0, 16, "SIG STATS since " + str.format_time(stT0, "yyyy-MM-dd", "Asia/Tehran"), text_color=color.yellow, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 1, 16, f_stTxt(nAll, wAll, rAll) + "  ·  max DD " + str.tostring(ddR, "#.#") + "R" + (sN > 0 ? "  ·  " + str.tostring(sN) + " open" : ""), text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 2, 16, nAll == 0 ? "—" : rAll > 0 ? "+" : "−", bgcolor=nAll == 0 ? color.new(color.gray, 50) : rAll > 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
-    table.cell(tb, 0, 17, "SIG $ P/L", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 1, 17, "win +$" + str.tostring(usdW, "#.#") + "  /  loss −$" + str.tostring(usdL, "#.#") + "  (per 1 oz)", text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(tb, 2, 17, (usdW - usdL >= 0 ? "+$" : "−$") + str.tostring(math.abs(usdW - usdL), "#.#"), bgcolor=usdW - usdL >= 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
+    table.cell(tb, 0, 16, "SIG STATS since " + str.format_time(stT0, "yyyy-MM-dd", "Asia/Tehran"), width=130, text_color=color.yellow, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 1, 16, f_wrap(f_stTxt(nAll, wAll, rAll) + "  ·  max DD " + str.tostring(ddR, "#.#") + "R" + (sN > 0 ? "  ·  " + str.tostring(sN) + " open" : ""), 36), width=190, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 2, 16, nAll == 0 ? "—" : rAll > 0 ? "+" : "−", width=90, bgcolor=nAll == 0 ? color.new(color.gray, 50) : rAll > 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
+    table.cell(tb, 0, 17, "SIG $ P/L", width=130, text_color=color.yellow, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 1, 17, "win +$" + str.tostring(usdW, "#.#") + "  /  loss −$" + str.tostring(usdL, "#.#") + "  (per 1 oz)", width=190, text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 2, 17, (usdW - usdL >= 0 ? "+$" : "−$") + str.tostring(math.abs(usdW - usdL), "#.#"), width=90, bgcolor=usdW - usdL >= 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
     0
 if barstate.islast and showTable
     f_drawSig()
