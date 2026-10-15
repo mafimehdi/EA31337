@@ -1464,6 +1464,7 @@ if pSt >= 1
 
 anaLo48 = ta.lowest(low, 48)
 anaHi48 = ta.highest(high, 48)
+var float anaRefPx = na
 anaHour = minute(time_close, "Asia/Tehran") == 0
 anaEvt = stFlipUp or stFlipDn ? "SuperTrend flip" : sBosUp or sBosDn or htfDir != nz(htfDir[1]) ? "structure change" : tlBrkUp or tlBrkDn ? "TL break" : not na(anaRefPx) and math.abs(close - anaRefPx) > atr14 * 2 ? "move > 2 ATR" : ""
 // plan follows the analysis note: on each note refresh, an untouched waiting plan is rebuilt from the same levels
@@ -1758,6 +1759,11 @@ f_draw1643() =>
     0
 if barstate.islast and showScen and showScenTbl
     f_draw1643()
+
+// reference price of the last plan/analysis refresh (used by anaEvt price-move check)
+anaGo = barstate.isconfirmed and bar_index >= last_bar_index - 300 and (na(anaRefPx) or anaHour or anaEvt != "")
+if anaGo
+    anaRefPx := close
 
 // ═════════════════════════ PIN BARS (yellow candles) ═════════════════════════
 pinRng = high - low
