@@ -45,23 +45,23 @@ input int               InpHTFSlowEMA                = 200;
 input int               InpM15EMALength              = 200;
 input int               InpRangePeriod               = 14;
 input int               InpRangeSmoothPeriod         = 21;
-input double            InpRangeMultiplier           = 1.30;
+input double            InpRangeMultiplier           = 1.10;
 input int               InpRangeHistoryBars          = 600;
 input int               InpChoppinessLength          = 14;
-input double            InpMaximumChoppiness         = 58.0;
+input double            InpMaximumChoppiness         = 61.8;
 
 // --- Sweep and MSS -----------------------------------------------------------
 input int               InpATRPeriod                 = 14;
 input int               InpLiquidityLookback         = 12;
-input double            InpMinimumSweepATR           = 0.10;
+input double            InpMinimumSweepATR           = 0.05;
 input int               InpSwingLength               = 5;
-input int               InpSweepToMssBars            = 8;
+input int               InpSweepToMssBars            = 12;
 input int               InpStateHistoryBars          = 500;
 
 // --- FVG and POI -------------------------------------------------------------
-input double            InpMinimumFvgATR             = 0.20;
-input int               InpMssToFvgBars              = 3;
-input int               InpFvgMaxAgeBars             = 12;
+input double            InpMinimumFvgATR             = 0.10;
+input int               InpMssToFvgBars              = 5;
+input int               InpFvgMaxAgeBars             = 20;
 input bool              InpRequireOrderBlockOverlap  = false;
 input int               InpOrderBlockLookback        = 12;
 input bool              InpUseOrderBlockWicks        = false;
@@ -69,7 +69,12 @@ input bool              InpUseOrderBlockWicks        = false;
 // --- Stop validation ---------------------------------------------------------
 input double            InpStopBufferATR             = 0.10;
 input double            InpMinimumStopATR            = 0.50;
-input double            InpMaximumStopATR            = 3.00;
+input double            InpMaximumStopATR            = 4.00;
+
+// --- Tester diagnostics ------------------------------------------------------
+// Prints one compact pipeline summary when the EA/test ends. It is useful for
+// locating the filter that suppresses entries without logging every tick.
+input bool              InpPrintDiagnostics          = true;
 
 // --- Internal state ----------------------------------------------------------
 struct SMCState {
@@ -122,6 +127,26 @@ datetime g_lastSignalBar = 0;
 int      g_digits = 0;
 double   g_point = 0.0;
 
+// Counters are updated once per completed M15 bar, never for the historical
+// bars re-scanned internally to reconstruct SMC state.
+long     g_evaluatedBars = 0;
+long     g_bullSweepEvents = 0;
+long     g_bearSweepEvents = 0;
+long     g_bullMssEvents = 0;
+long     g_bearMssEvents = 0;
+long     g_bullFvgEvents = 0;
+long     g_bearFvgEvents = 0;
+long     g_bullRetests = 0;
+long     g_bearRetests = 0;
+long     g_retestsPassingBias = 0;
+long     g_retestsPassingEma = 0;
+long     g_retestsPassingRange = 0;
+long     g_retestsPassingChop = 0;
+long     g_retestsPassingStop = 0;
+long     g_longSetups = 0;
+long     g_shortSetups = 0;
+long     g_openedTrades = 0;
+
 //+------------------------------------------------------------------+
 //| Initialization                                                   |
 //+------------------------------------------------------------------+
@@ -154,6 +179,24 @@ int OnInit() {
     Print("Warning: this EA is designed and calibrated for M15. Current signal timeframe: ", InpSignalTimeframe);
   }
 
+  g_evaluatedBars = 0;
+  g_bullSweepEvents = 0;
+  g_bearSweepEvents = 0;
+  g_bullMssEvents = 0;
+  g_bearMssEvents = 0;
+  g_bullFvgEvents = 0;
+  g_bearFvgEvents = 0;
+  g_bullRetests = 0;
+  g_bearRetests = 0;
+  g_retestsPassingBias = 0;
+  g_retestsPassingEma = 0;
+  g_retestsPassingRange = 0;
+  g_retestsPassingChop = 0;
+  g_retestsPassingStop = 0;
+  g_longSetups = 0;
+  g_shortSetups = 0;
+  g_openedTrades = 0;
+
   g_lastSignalBar = iTime(g_symbol, InpSignalTimeframe, 0);
   Print("SMC XAU M15 EA initialized for ", g_symbol, ". Waiting for the next closed M15 candle.");
   return(INIT_SUCCEEDED);
@@ -161,6 +204,18 @@ int OnInit() {
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
+  if (InpPrintDiagnostics) {
+    Print("SMC diagnostics | evaluated=", g_evaluatedBars,
+          " | sweeps L/S=", g_bullSweepEvents, "/", g_bearSweepEvents,
+          " | MSS L/S=", g_bullMssEvents, "/", g_bearMssEvents,
+          " | FVG L/S=", g_bullFvgEvents, "/", g_bearFvgEvents,
+          " | CE retests L/S=", g_bullRetests, "/", g_bearRetests);
+    Print("SMC diagnostics | retests passing bias/EMA/range/CHOP/stop=",
+          g_retestsPassingBias, "/", g_retestsPassingEma, "/",
+          g_retestsPassingRange, "/", g_retestsPassingChop, "/", g_retestsPassingStop,
+          " | setups L/S=", g_longSetups, "/", g_shortSetups,
+          " | opened=", g_openedTrades);
+  }
   Print("SMC XAU M15 EA stopped. Reason: ", reason);
 }
 
@@ -400,6 +455,35 @@ bool EvaluateClosedBar(SignalResult &result) {
                        state.bullFvgObOK && bullRetest && longStopValid;
       bool shortSetup = htfBear && closePrice < m15Ema && rangeDirection == -1 && regimeOK &&
                         state.bearFvgObOK && bearRetest && shortStopValid;
+
+      if (InpPrintDiagnostics) {
+        g_evaluatedBars++;
+        if (bullSweep) g_bullSweepEvents++;
+        if (bearSweep) g_bearSweepEvents++;
+        if (bullMss) g_bullMssEvents++;
+        if (bearMss) g_bearMssEvents++;
+        if (bullFvgNew) g_bullFvgEvents++;
+        if (bearFvgNew) g_bearFvgEvents++;
+        if (bullRetest) g_bullRetests++;
+        if (bearRetest) g_bearRetests++;
+
+        bool hasRetest = bullRetest || bearRetest;
+        bool biasPass = (bullRetest && htfBull) || (bearRetest && htfBear);
+        bool emaPass = (bullRetest && htfBull && closePrice > m15Ema) ||
+                       (bearRetest && htfBear && closePrice < m15Ema);
+        bool rangePass = (bullRetest && htfBull && closePrice > m15Ema && rangeDirection == 1) ||
+                         (bearRetest && htfBear && closePrice < m15Ema && rangeDirection == -1);
+        bool chopPass = rangePass && regimeOK;
+        bool stopPass = (bullRetest && chopPass && state.bullFvgObOK && longStopValid) ||
+                        (bearRetest && chopPass && state.bearFvgObOK && shortStopValid);
+        if (hasRetest && biasPass) g_retestsPassingBias++;
+        if (hasRetest && emaPass) g_retestsPassingEma++;
+        if (hasRetest && rangePass) g_retestsPassingRange++;
+        if (hasRetest && chopPass) g_retestsPassingChop++;
+        if (hasRetest && stopPass) g_retestsPassingStop++;
+        if (longSetup) g_longSetups++;
+        if (shortSetup) g_shortSetups++;
+      }
 
       // Never send two opposing orders from a single closed candle.
       if (longSetup && !shortSetup) {
@@ -833,6 +917,9 @@ void OpenSignalTrade(SignalResult &signal) {
   }
 
   GlobalVariableSet(InitialRiskKey(ticket), actualRisk);
+  if (InpPrintDiagnostics) {
+    g_openedTrades++;
+  }
   Print("Opened ", signal.direction > 0 ? "BUY" : "SELL", " ticket=", ticket,
         " lots=", DoubleToString(lots, 2), " SL=", DoubleToString(stop, g_digits),
         " TP=", DoubleToString(takeProfit, g_digits), " risk=", DoubleToString(actualRisk, g_digits));

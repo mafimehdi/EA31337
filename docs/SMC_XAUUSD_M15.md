@@ -14,11 +14,11 @@ This implementation is a **mechanical, repeatable definition** of an SMC-style s
 For a long trade, each event below must occur in sequence. Short logic is the exact inverse.
 
 1. The most recently closed H1 and H4 candles must satisfy `Close > EMA50 > EMA200`.
-2. An M15 candle must sweep the lowest low of the preceding 12 M15 candles by at least `0.10 ATR`, then close bullishly back above that level. This is the mechanical sell-side liquidity-sweep definition.
-3. Within eight M15 bars, price must close above the latest confirmed swing high. A swing requires five bars on each side to confirm. This is the market-structure shift (MSS).
-4. Within three bars after MSS, a three-candle bullish FVG at least `0.20 ATR` wide must form. Only the **first** post-MSS FVG is the POI.
-5. Within 12 bars, price must return to the FVG consequent encroachment (CE, the midpoint), avoid a full fill, and close the retest bar bullishly.
-6. On that retest bar, price must be above the M15 EMA200, the ATR-scaled Range Filter must be bullish, and Choppiness must be below 58.
+2. An M15 candle must sweep the lowest low of the preceding 12 M15 candles by at least `0.05 ATR`, then close bullishly back above that level. This is the mechanical sell-side liquidity-sweep definition.
+3. Within 12 M15 bars, price must close above the latest confirmed swing high. A swing requires five bars on each side to confirm. This is the market-structure shift (MSS).
+4. Within five bars after MSS, a three-candle bullish FVG at least `0.10 ATR` wide must form. Only the **first** post-MSS FVG is the POI.
+5. Within 20 bars, price must return to the FVG consequent encroachment (CE, the midpoint), avoid a full fill, and close the retest bar bullishly.
+6. On that retest bar, price must be above the M15 EMA200, the ATR-scaled Range Filter must be bullish, and Choppiness must be below 61.8.
 
 When `Require order-block overlap` is enabled, the FVG must overlap the last opposite-colour candle before the MSS. This is considerably more selective and is disabled by default.
 
@@ -26,7 +26,7 @@ When `Require order-block overlap` is enabled, the FVG must overlap the last opp
 
 - Default risk: `1%` of equity per trade.
 - Stop loss: beyond the swept extreme, plus `0.10 ATR` buffer.
-- Stops tighter than `0.50 ATR` are expanded to that distance; stops wider than `3.00 ATR` are rejected.
+- Stops tighter than `0.50 ATR` are expanded to that distance; stops wider than `4.00 ATR` are rejected.
 - Take profit: `2R`.
 - Breakeven: stop moves to breakeven after `1R`.
 - Only one EA position per symbol and magic number may be open at once.
@@ -37,7 +37,7 @@ When `Require order-block overlap` is enabled, the FVG must overlap the last opp
 1. Paste `SMC_XAUUSD_M15_Strategy.pine` into TradingView Pine Editor and add it to the chart.
 2. Use a standard-candle **XAUUSD M15** chart. Do not use Heikin-Ashi bars.
 3. For alerts, choose **Order fills** or **Any alert() function call** in Create Alert, and use **Once Per Bar Close**.
-4. Defaults match the selected profile: H1/H4 bias, M15 EMA200, `1.30 ATR` Range Filter and `58` Choppiness limit.
+4. Defaults use the balanced SMC profile: H1/H4 bias, M15 EMA200, `1.10 ATR` Range Filter and `61.8` Choppiness limit.
 5. Verify the TradingView symbol's contract multiplier, commission and slippage before interpreting backtest position sizing. Pine quantity uses the feed's `syminfo.pointvalue`.
 
 ## MT4 setup
@@ -47,6 +47,7 @@ When `Require order-block overlap` is enabled, the FVG must overlap the last opp
 3. Leave `InpSymbol` empty to use the Strategy Tester/chart symbol. Set it only when deliberately trading a different broker symbol; examples include `XAUUSDm` and `GOLD`.
 4. Before any live use, confirm in the Journal that `MODE_TICKVALUE` and `MODE_TICKSIZE` are valid. The EA uses them to calculate the 1% risk lot size.
 5. `InpMaxSpreadPrice=0.80` is in **gold price units**, not broker points. Adjust it to the actual spread of the broker.
+6. Leave `InpPrintDiagnostics=true` during backtests. At the end of the Journal, the EA prints counts for sweeps, MSS events, FVGs, CE retests and every later filter gate.
 
 ## Expected TradingView and MT4 differences
 

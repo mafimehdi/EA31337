@@ -46,23 +46,23 @@ groupTrend = "03. M15 trend and regime filters"
 emaLength = input.int(200, "M15 EMA filter", minval=1, group=groupTrend)
 rangePeriod = input.int(14, "Range true-range EMA period", minval=1, group=groupTrend)
 rangeSmoothPeriod = input.int(21, "Range smoothing period", minval=1, group=groupTrend)
-rangeMultiplier = input.float(1.30, "Range size (ATR multiplier)", minval=0.1, step=0.05, group=groupTrend)
+rangeMultiplier = input.float(1.10, "Range size (ATR multiplier)", minval=0.1, step=0.05, group=groupTrend)
 chopLength = input.int(14, "Choppiness length", minval=2, group=groupTrend)
-chopLimit = input.float(58.0, "Maximum Choppiness", minval=1.0, maxval=99.0, step=0.1, group=groupTrend)
+chopLimit = input.float(61.8, "Maximum Choppiness", minval=1.0, maxval=99.0, step=0.1, group=groupTrend)
 
 // A sweep must take a prior liquidity high/low and then close back through it.
 groupStructure = "04. Sweep and market-structure shift"
 atrLength = input.int(14, "ATR length", minval=1, group=groupStructure)
 liquidityLookback = input.int(12, "Liquidity lookback (M15 bars)", minval=3, group=groupStructure)
-minimumSweepATR = input.float(0.10, "Minimum sweep depth (ATR)", minval=0.0, step=0.05, group=groupStructure)
+minimumSweepATR = input.float(0.05, "Minimum sweep depth (ATR)", minval=0.0, step=0.05, group=groupStructure)
 swingLength = input.int(5, "Confirmed swing length", minval=2, group=groupStructure)
-sweepToMssBars = input.int(8, "Maximum bars from sweep to MSS", minval=1, group=groupStructure)
+sweepToMssBars = input.int(12, "Maximum bars from sweep to MSS", minval=1, group=groupStructure)
 
 // A FVG is only recorded after an MSS and is traded once on its first CE retest.
 groupFvg = "05. Fair-value gap and POI"
-minimumFvgATR = input.float(0.20, "Minimum FVG size (ATR)", minval=0.0, step=0.05, group=groupFvg)
-mssToFvgBars = input.int(3, "Maximum bars from MSS to FVG", minval=0, group=groupFvg)
-fvgMaxAgeBars = input.int(12, "Maximum FVG age (M15 bars)", minval=1, group=groupFvg)
+minimumFvgATR = input.float(0.10, "Minimum FVG size (ATR)", minval=0.0, step=0.05, group=groupFvg)
+mssToFvgBars = input.int(5, "Maximum bars from MSS to FVG", minval=0, group=groupFvg)
+fvgMaxAgeBars = input.int(20, "Maximum FVG age (M15 bars)", minval=1, group=groupFvg)
 requireOrderBlockConfluence = input.bool(false, "Require order-block overlap", group=groupFvg,
      tooltip="When enabled, the FVG must overlap the most recent opposite-colour candle before the MSS. It is much more selective.")
 orderBlockLookback = input.int(12, "Order-block search bars", minval=1, group=groupFvg)
@@ -73,7 +73,7 @@ useOrderBlockWicks = input.bool(false, "Use candle wicks for order block", group
 groupStops = "06. Stop validation"
 stopBufferATR = input.float(0.10, "Sweep stop buffer (ATR)", minval=0.0, step=0.05, group=groupStops)
 minimumStopATR = input.float(0.50, "Minimum stop distance (ATR)", minval=0.1, step=0.05, group=groupStops)
-maximumStopATR = input.float(3.00, "Maximum stop distance (ATR)", minval=0.5, step=0.10, group=groupStops)
+maximumStopATR = input.float(4.00, "Maximum stop distance (ATR)", minval=0.5, step=0.10, group=groupStops)
 
 // -----------------------------------------------------------------------------
 // Helpers
