@@ -150,6 +150,9 @@ long     g_bullStopRejections = 0;
 long     g_bearStopRejections = 0;
 double   g_widestBullStopATR = 0.0;
 double   g_widestBearStopATR = 0.0;
+long     g_minimumLotSkips = 0;
+double   g_highestMinimumLotRiskPct = 0.0;
+double   g_highestRequiredEquity = 0.0;
 
 //+------------------------------------------------------------------+
 //| Initialization                                                   |
@@ -204,6 +207,9 @@ int OnInit() {
   g_bearStopRejections = 0;
   g_widestBullStopATR = 0.0;
   g_widestBearStopATR = 0.0;
+  g_minimumLotSkips = 0;
+  g_highestMinimumLotRiskPct = 0.0;
+  g_highestRequiredEquity = 0.0;
 
   g_lastSignalBar = iTime(g_symbol, InpSignalTimeframe, 0);
   Print("SMC XAU M15 EA initialized for ", g_symbol, ". Waiting for the next closed M15 candle.");
@@ -226,6 +232,9 @@ void OnDeinit(const int reason) {
     Print("SMC diagnostics | stop rejects L/S=", g_bullStopRejections, "/", g_bearStopRejections,
           " | widest rejected stop ATR L/S=", DoubleToString(g_widestBullStopATR, 2), "/",
           DoubleToString(g_widestBearStopATR, 2), " | configured maximum=", DoubleToString(InpMaximumStopATR, 2));
+    Print("SMC diagnostics | minimum-lot skips=", g_minimumLotSkips,
+          " | highest risk at broker minimum=", DoubleToString(g_highestMinimumLotRiskPct, 2), "%",
+          " | highest equity needed for ", DoubleToString(InpRiskPercent, 2), "% risk=", DoubleToString(g_highestRequiredEquity, 2));
   }
   Print("SMC XAU M15 EA stopped. Reason: ", reason);
 }
@@ -898,7 +907,7 @@ void OpenSignalTrade(SignalResult &signal) {
 
   double lots = CalculateLots(riskDistance);
   if (lots <= 0.0) {
-    Print("Risk model produced a lot size below broker minimum; signal skipped.");
+    LogMinimumLotSkip(riskDistance, signal.direction, signal.signalBarTime);
     return;
   }
 
@@ -962,6 +971,41 @@ double CalculateLots(double riskDistance) {
     return(0.0);
   }
   return(NormalizeLots(riskMoney / lossPerLot));
+}
+
+//+------------------------------------------------------------------+
+//| Explains why strict percentage-risk sizing cannot trade the      |
+//| broker's minimum volume. It never rounds up or relaxes risk.     |
+//+------------------------------------------------------------------+
+void LogMinimumLotSkip(double riskDistance, int direction, datetime signalTime) {
+  double tickSize = MarketInfo(g_symbol, MODE_TICKSIZE);
+  double tickValue = MarketInfo(g_symbol, MODE_TICKVALUE);
+  double minLot = MarketInfo(g_symbol, MODE_MINLOT);
+  double equity = AccountEquity();
+  if (riskDistance <= 0.0 || tickSize <= 0.0 || tickValue <= 0.0 || minLot <= 0.0 || equity <= 0.0) {
+    Print("Risk model skipped signal because lot-sizing data is invalid.");
+    return;
+  }
+
+  double lossPerLot = riskDistance / tickSize * tickValue;
+  double targetRiskMoney = equity * InpRiskPercent / 100.0;
+  double requestedLots = targetRiskMoney / lossPerLot;
+  double minimumLotRiskMoney = lossPerLot * minLot;
+  double minimumLotRiskPercent = minimumLotRiskMoney / equity * 100.0;
+  double requiredEquity = minimumLotRiskMoney * 100.0 / InpRiskPercent;
+
+  if (InpPrintDiagnostics) {
+    g_minimumLotSkips++;
+    g_highestMinimumLotRiskPct = MathMax(g_highestMinimumLotRiskPct, minimumLotRiskPercent);
+    g_highestRequiredEquity = MathMax(g_highestRequiredEquity, requiredEquity);
+  }
+
+  Print("Risk model skipped ", direction > 0 ? "BUY" : "SELL",
+        " at ", TimeToString(signalTime, TIME_DATE | TIME_MINUTES),
+        " | requested lots=", DoubleToString(requestedLots, 4),
+        " | broker minimum=", DoubleToString(minLot, LotDigits(MarketInfo(g_symbol, MODE_LOTSTEP))),
+        " | risk at minimum=", DoubleToString(minimumLotRiskMoney, 2), " (", DoubleToString(minimumLotRiskPercent, 2), "%)",
+        " | equity needed for ", DoubleToString(InpRiskPercent, 2), "% risk=", DoubleToString(requiredEquity, 2));
 }
 
 //+------------------------------------------------------------------+

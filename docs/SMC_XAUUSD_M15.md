@@ -25,6 +25,7 @@ When `Require order-block overlap` is enabled, the FVG must overlap the last opp
 ## Trade management
 
 - Default risk: `1%` of equity per trade.
+- Strict minimum-lot policy: if 1% sizing is below the broker's minimum volume, the EA skips the trade. It never rounds the volume up and silently exceeds the risk budget.
 - Stop loss: beyond the swept extreme, plus `0.10 ATR` buffer.
 - Stops tighter than `0.50 ATR` are expanded to that distance; stops wider than `6.00 ATR` are rejected.
 - Take profit: `2R`.
@@ -47,7 +48,7 @@ When `Require order-block overlap` is enabled, the FVG must overlap the last opp
 3. Leave `InpSymbol` empty to use the Strategy Tester/chart symbol. Set it only when deliberately trading a different broker symbol; examples include `XAUUSDm` and `GOLD`.
 4. Before any live use, confirm in the Journal that `MODE_TICKVALUE` and `MODE_TICKSIZE` are valid. The EA uses them to calculate the 1% risk lot size.
 5. `InpMaxSpreadPrice=0.80` is in **gold price units**, not broker points. Adjust it to the actual spread of the broker.
-6. Leave `InpPrintDiagnostics=true` during backtests. At the end of the Journal, the EA prints counts for sweeps, MSS events, FVGs, CE retests, every later filter gate, and the widest ATR-normalized stop rejected by the maximum-stop filter.
+6. Leave `InpPrintDiagnostics=true` during backtests. At the end of the Journal, the EA prints counts for sweeps, MSS events, FVGs, CE retests, every later filter gate, the widest ATR-normalized rejected stop, and the equity required to trade the broker's minimum lot without exceeding the configured percentage risk.
 
 ## Expected TradingView and MT4 differences
 
