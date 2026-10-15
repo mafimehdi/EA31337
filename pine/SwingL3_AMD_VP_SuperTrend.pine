@@ -6,12 +6,12 @@ indicator("Swing L3 + AMD + VP + SuperTrend [Dashboard]", shorttitle="SL3-AMD-VP
 
 // ═════════════════════════════ INPUTS ═════════════════════════════
 grpS  = "① Swing Layers"
-atrLen      = input.int(14, "ATR length (buffers, thresholds, OB/label sizing)", minval=5, maxval=50, group=grpS, tooltip="14 = Wilder standard (~3.5h on 15m). 21 = smoother (~5h) but reacts later to London/NY volatility spikes.")
+atrLen      = input.int(7, "ATR length (buffers, thresholds, OB/label sizing)", minval=5, maxval=50, group=grpS, tooltip="14 = Wilder standard (~3.5h on 15m). 21 = smoother (~5h) but reacts later to London/NY volatility spikes.")
 pivLeft     = input.int(3, "Layer-1 pivot LEFT bars (filters noise, no delay)", minval=1, group=grpS)
 pivLen      = input.int(2, "Layer-1 pivot RIGHT bars (= confirmation delay)", minval=1, group=grpS, tooltip="Delay of every L1 swing = this many bars. 2 = fast, 3 = smoother.")
-htfTf       = input.timeframe("60", "HTF structure timeframe (fast L3 proxy)", group=grpS, tooltip="L1 swings on a higher timeframe ≈ L3 on the chart timeframe, but confirmed much faster. Choose 4-8x the chart timeframe.")
-htfPiv      = input.int(2, "HTF pivot length", minval=1, group=grpS)
-showL1      = input.bool(false, "Show Layer-1 swings", group=grpS)
+htfTf       = input.timeframe("240", "HTF structure timeframe (fast L3 proxy)", group=grpS, tooltip="L1 swings on a higher timeframe ≈ L3 on the chart timeframe, but confirmed much faster. Choose 4-8x the chart timeframe.")
+htfPiv      = input.int(3, "HTF pivot length", minval=1, group=grpS)
+showL1      = input.bool(true, "Show Layer-1 swings", group=grpS)
 showL2      = input.bool(true,  "Show Layer-2 swings", group=grpS)
 showL3      = input.bool(true,  "Show Layer-3 swings + levels", group=grpS)
 
@@ -23,24 +23,27 @@ amdHtf      = input.timeframe("D", "HTF candle for PO3 / session reset", group=g
 amdSweepAtr = input.float(0.1, "Min sweep beyond range (x ATR)", minval=0, step=0.05, group=grpE)
 showAMD     = input.bool(true, "Draw accumulation box", group=grpE)
 amdTrendF   = input.bool(true, "AMD: ignore sweeps against the trend (no vote)", group=grpE, tooltip="A high sweep in an uptrend (or low sweep in a downtrend) is often just liquidity grab before continuation. When on, such manipulation is shown but gives 0 vote.")
-amdAccept   = input.int(2, "AMD: cancel after N closes back beyond swept level", minval=1, maxval=10, group=grpE)
-amdCoreMin  = input.int(120, "Accumulation core (minutes from session start)", minval=15, maxval=600, step=15, group=grpE, tooltip="The range is built only from the first N minutes of the session. A sweep later in the session (late-Asia Judas swing) already counts as manipulation. Set >= session length to use the whole session.")
+amdAccept   = input.int(1, "AMD: cancel after N closes back beyond swept level", minval=1, maxval=10, group=grpE)
+amdCoreMin  = input.int(180, "Accumulation core (minutes from session start)", minval=15, maxval=600, step=15, group=grpE, tooltip="The range is built only from the first N minutes of the session. A sweep later in the session (late-Asia Judas swing) already counts as manipulation. Set >= session length to use the whole session.")
 amdManWin   = input.session("0000-1100", "Manipulation window (sweep must start here)", group=grpE, tooltip="Session mode only. ICT: Asia = accumulation, London/NY-AM = manipulation. Sweeps outside this window are ignored.")
-amdReclaim  = input.int(3, "Sweep must close back inside within N bars", minval=1, maxval=10, group=grpE, tooltip="If price stays beyond the range longer, it is a real breakout (no trap) and the AMD cycle ends for the day.")
+amdReclaim  = input.int(2, "Sweep must close back inside within N bars", minval=1, maxval=10, group=grpE, tooltip="If price stays beyond the range longer, it is a real breakout (no trap) and the AMD cycle ends for the day.")
 amdPo3Bars  = input.int(3, "PO3 mode: accumulation bars after HTF open", minval=1, maxval=20, group=grpE)
 
 grpV  = "③ Volume Profile"
 vpLookback  = input.int(200, "Lookback bars", minval=20, maxval=1000, group=grpV)
-vpRows      = input.int(40, "Rows", minval=10, maxval=100, group=grpV)
+vpRows      = input.int(50, "Rows", minval=10, maxval=100, group=grpV)
 vpVA        = input.float(70, "Value Area %", minval=50, maxval=95, group=grpV) / 100
 showVP      = input.bool(true, "Draw profile histogram", group=grpV)
-vpWidth     = input.int(40, "Histogram width (bars)", minval=10, maxval=150, group=grpV)
+vpWidth     = input.int(60, "Histogram width (bars)", minval=10, maxval=150, group=grpV)
 vpCalcBars  = input.int(2000, "Calculate VP on last N bars (speed)", minval=50, maxval=5000, group=grpV, tooltip="Bars older than this get no VP vote. Keep high for consistent history / backtests.")
 
 grpT  = "④ SuperTrend"
 stFactor    = input.float(3.0, "Factor", minval=0.5, step=0.1, group=grpT)
-stAtr       = input.int(10, "ATR length", minval=1, group=grpT)
+stAtr       = input.int(7, "ATR length", minval=1, group=grpT)
 showST      = input.bool(true, "Plot SuperTrend", group=grpT)
+rfOn      = input.bool(true, "Range Filter line (ported from ZPayab DIY builder)", group=grpT)
+rfPer     = input.int(100, "Range Filter period", minval=1, group=grpT)
+rfMult    = input.float(3.0, "Range Filter multiplier", minval=0.1, step=0.1, group=grpT)
 
 grpR  = "⑤ Volume / Risk / Signals"
 rvolLen     = input.int(20, "Relative volume length", minval=5, group=grpR)
@@ -117,7 +120,6 @@ tblSize     = input.string("Small", "Text size", options=["Tiny", "Small", "Norm
 showTable   = input.bool(true, "Show dashboard table", group=grpD)
 showScen    = input.bool(true, "Scenario plan engine (feeds the analysis note)", group=grpD)
 showScenTbl = input.bool(false, "Show scenario table + plan lines", group=grpD)
-showChk     = input.bool(true, "Show entry checklist (replaces scenario table)", group=grpD)
 chkPinTl    = input.bool(false, "Checklist: pin bar → TL combo (pin = location)", group=grpD, tooltip="A pin bar followed by a same-direction TL break within the window counts as location + trigger, even if the pin was not at a level. Stop goes behind the pin.")
 chkPinWin   = input.int(8, "Checklist: pin → TL window (bars)", minval=1, maxval=20, group=grpD)
 chkRule     = input.string("Score", "Checklist: trigger rule", options=["Score", "2 of 3", "Any 1", "Pin or TL (classic)"], group=grpD, tooltip="2 of 3: two different triggers (pin / TL / REV) in the same direction within the memory. Any 1: a single trigger after the location (classic).")
@@ -165,8 +167,6 @@ pinOpp      = input.float(10, "Pin bar: max opposite wick (% of range)", minval=
 pinProt     = input.bool(true, "Pin bar: wick must protrude beyond previous bars", group=grpD)
 pinLook     = input.int(3, "Pin bar: protrude beyond last N bars", minval=1, maxval=10, group=grpD)
 pinMinAtr   = input.float(0.5, "Pin bar: min range (x ATR)", minval=0, step=0.1, group=grpD)
-showAna     = input.bool(true, "Show analysis box (Persian trader read)", group=grpD)
-anaPos      = input.string("Middle Left", "Analysis box position", options=["Bottom Left", "Top Left", "Middle Left", "Bottom Center", "Top Center"], group=grpD)
 scenPos     = input.string("Bottom Right", "Scenario table position", options=["Bottom Right", "Bottom Left", "Top Left", "Middle Right", "Top Right"], group=grpD)
 
 // ═════════════════════════════ HELPERS ═════════════════════════════
@@ -674,6 +674,14 @@ f_draw626() =>
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
+
+// ── Range Filter (ported from ZPayab DIY Strategy Builder, default Range Filter) ──
+rfSmr  = ta.ema(ta.ema(math.abs(close - close[1]), rfPer), rfPer * 2 - 1) * rfMult
+var float rfLine = na
+rfLine := na(rfLine[1]) ? close : close - rfSmr > rfLine[1] ? close - rfSmr : close + rfSmr < rfLine[1] ? close + rfSmr : rfLine[1]
+var int rfDir = 0
+rfDir := rfLine > rfLine[1] ? 1 : rfLine < rfLine[1] ? -1 : nz(rfDir[1])
+plot(rfOn ? rfLine : na, "Range Filter", color=rfDir == 1 ? color.lime : rfDir == -1 ? color.red : color.orange, linewidth=2)
 
 // ═════════════════════════ ④ SUPERTREND ═════════════════════════
 [stLine, stDir] = ta.supertrend(stFactor, stAtr)
@@ -1267,7 +1275,7 @@ tlNeedS = tlOn and tlPlan and not na(tlS) and not tlSbrk
 tlState = tlRbrk and not tlSbrk ? 1 : tlSbrk and not tlRbrk ? -1 : 0
 tlTxt = tlSessName + ": " + tlPat + (tlCarryR or tlCarryS ? " (carried " + (tlCarryR ? "R" : "") + (tlCarryS ? "S" : "") + ")" : "") + "  |  R " + (na(tlRv) ? "–" : str.tostring(tlRv, format.mintick)) + "  S " + (na(tlSv) ? "–" : str.tostring(tlSv, format.mintick)) + "  |  last: " + tlLast
 
-var table tb = table.new(posT, 3, 16, bgcolor=color.new(#131722, 10), border_color=color.new(color.gray, 70), border_width=1, frame_color=color.gray, frame_width=1)
+var table tb = table.new(posT, 3, 18, bgcolor=color.new(#131722, 10), border_color=color.new(color.gray, 70), border_width=1, frame_color=color.gray, frame_width=1)
 fmt(float v) => na(v) ? "—" : str.tostring(v, format.mintick)
 suggTxt() => pos == 1 ? "HOLD LONG" : pos == -1 ? "HOLD SHORT" : longOK ? "LOOK FOR LONG" : shortOK ? "LOOK FOR SHORT" : "WAIT"
 fmtD(int last, float sum, int n) => (na(last) ? "—" : str.tostring(last)) + (n > 0 ? " (avg " + str.tostring(sum / n, "#.#") + ")" : "")
@@ -1454,11 +1462,8 @@ if pSt >= 1
     if liveB != 0
         pBias := liveB > 0 ? 1 : -1
 
-anaLo = ta.lowest(low, 12)
-anaHi = ta.highest(high, 12)
 anaLo48 = ta.lowest(low, 48)
 anaHi48 = ta.highest(high, 48)
-var float  anaRefPx = na
 anaHour = minute(time_close, "Asia/Tehran") == 0
 anaEvt = stFlipUp or stFlipDn ? "SuperTrend flip" : sBosUp or sBosDn or htfDir != nz(htfDir[1]) ? "structure change" : tlBrkUp or tlBrkDn ? "TL break" : not na(anaRefPx) and math.abs(close - anaRefPx) > atr14 * 2 ? "move > 2 ATR" : ""
 // plan follows the analysis note: on each note refresh, an untouched waiting plan is rebuilt from the same levels
@@ -1754,57 +1759,6 @@ f_draw1643() =>
 if barstate.islast and showScen and showScenTbl
     f_draw1643()
 
-// ═════════════════════════ ANALYSIS BOX (Persian trader read of the current chart) ═════════════════════════
-anaP = anaPos == "Bottom Left" ? position.bottom_left : anaPos == "Top Left" ? position.top_left : anaPos == "Middle Left" ? position.middle_left : anaPos == "Bottom Center" ? position.bottom_center : position.top_center
-var table ana = table.new(anaP, 1, 1, bgcolor=color.new(#1e222d, 0), border_width=0, frame_color=color.new(color.aqua, 40), frame_width=1)
-var string aNote = ""
-f_buildAnaNote() =>
-    bD = structState != 0 ? structState : stState
-    av = array.new_float()
-    an = array.new_string()
-    f_lvAdd(av, an, brkUp, "سقف شکسته")
-    f_lvAdd(av, an, brkDn, "کف شکسته")
-    f_lvAdd(av, an, vpPOC, "POC")
-    f_lvAdd(av, an, vpVAH, "VAH")
-    f_lvAdd(av, an, vpVAL, "VAL")
-    f_lvAdd(av, an, stLine, "SuperTrend")
-    f_lvAdd(av, an, lastH3, "سقف L3")
-    f_lvAdd(av, an, lastL3, "کف L3")
-    f_lvAdd(av, an, lastH2, "سقف L2")
-    f_lvAdd(av, an, lastL2, "کف L2")
-    f_lvAdd(av, an, htfH, "سقف HTF")
-    f_lvAdd(av, an, htfL, "کف HTF")
-    f_lvAdd(av, an, pdh, "سقف دیروز")
-    f_lvAdd(av, an, pdl, "کف دیروز")
-    f_lvAdd(av, an, anaLo48, "کف ۱۲ ساعت")
-    f_lvAdd(av, an, anaHi48, "سقف ۱۲ ساعت")
-    for z in zones
-        f_lvAdd(av, an, z.dir == 1 ? z.top : z.bot, z.dir == 1 ? "Bull OB" : "Bear OB")
-    [r1, r1n] = f_above(av, an, close + atr14 * 0.1)
-    [r2, r2n] = f_above(av, an, nz(r1, close) + atr14 * 0.3)
-    [s1, s1n] = f_below(av, an, close - atr14 * 0.1)
-    [s2, s2n] = f_below(av, an, nz(s1, close) - atr14 * 0.3)
-    trSimple = bD == 1 ? "بازار صعودی است" : bD == -1 ? "بازار نزولی است" : "بازار فعلاً جهت مشخصی ندارد"
-    nowSimple = bD == -1 and close - anaLo > atr14 ? " و قیمت از کف " + fmt(anaLo) + " کمی برگشته." + "\n‏" + "این برگشت هنوز به معنی صعودی شدن نیست." : bD == 1 and anaHi - close > atr14 ? " و قیمت از سقف " + fmt(anaHi) + " کمی اصلاح کرده." + "\n‏" + "این اصلاح هنوز به معنی نزولی شدن نیست." : bD == -1 ? " و فشار فروش ادامه دارد." : bD == 1 ? " و فشار خرید ادامه دارد." : " و قیمت در رنج نوسان می‌کند."
-    lvR = na(r1) ? "مقاومت مشخصی بالای قیمت نیست" : "مقاومت بعدی " + fmt(r1) + (na(r2) ? "" : " و بعد " + fmt(r2))
-    lvS = na(s1) ? "حمایت مشخصی زیر قیمت نیست" : "حمایت بعدی " + fmt(s1) + (na(s2) ? "" : " و بعد " + fmt(s2))
-    rl = "‏"
-    nl = "\n" + rl
-    wS = pBias == -1
-    aEnt = pSt == 2 ? "خرید پلن فعال است از " + fmt(actE) : pSt == 3 ? "فروش پلن فعال است از " + fmt(actE) : wS ? (sOff ? "سمت فروش از دست رفته؛ صبر کنید" : "فروش در " + fmt(sE)) : (bOff ? "سمت خرید از دست رفته؛ صبر کنید" : "خرید در " + fmt(bE))
-    aCond = pSt >= 2 ? "" : wS and not sOff ? "شرط: قیمت به " + fmt(sE) + " برسد و یک کندل نزولی زیر آن بسته شود." : not wS and not bOff ? "شرط: قیمت به " + fmt(bE) + " برسد و یک کندل صعودی بالای آن بسته شود." : ""
-    aTgt = pSt == 2 or (pSt == 1 and not wS and not bOff) ? "حد ضرر " + fmt(bSL) + "  ·  هدف " + fmt(bTP) : pSt == 3 or (pSt == 1 and wS and not sOff) ? "حد ضرر " + fmt(sSL) + "  ·  هدف " + fmt(sTP) : ""
-    aAlt = pSt != 1 ? "" : wS and not bOff ? "خرید با نصف حجم در " + fmt(bE) + " (کندل صعودی)، حد ضرر " + fmt(bSL) + "، هدف " + fmt(bTP) + "." : not wS and not sOff ? "فروش با نصف حجم در " + fmt(sE) + " (کندل نزولی)، حد ضرر " + fmt(sSL) + "، هدف " + fmt(sTP) + "." : ""
-    aInv = pSt == 1 ? "اگر کندل ۱۵ دقیقه " + (wS ? "بالای " + fmt(sSL) : "زیر " + fmt(bSL)) + " بسته شود، این تحلیل باطل است." : ""
-    aWait = pSt == 1 ? "بین " + fmt(bE) + " و " + fmt(sE) + " وارد نشوید (همان سطوح جدول سناریو)." : ""
-    rl + "یادداشت تحلیل  ·  ساعت " + str.format_time(time_close, "HH:mm", "Asia/Tehran") + nl + nl + trSimple + nowSimple + nl + lvR + "." + nl + lvS + "." + nl + nl + "پیشنهاد: " + aEnt + "." + (aCond == "" ? "" : nl + aCond) + (aTgt == "" ? "" : nl + aTgt + ".") + (aAlt == "" ? "" : nl + nl + "در غیر این صورت: " + aAlt) + (aInv == "" ? "" : nl + aInv) + (aWait == "" ? "" : nl + aWait)
-anaGo = showAna and barstate.isconfirmed and bar_index >= last_bar_index - 300 and (na(anaRefPx) or anaHour or anaEvt != "")
-if anaGo
-    anaRefPx := close
-    aNote := f_buildAnaNote()
-if barstate.islast and showAna
-    table.cell(ana, 0, 0, aNote, text_color=color.new(color.white, 5), text_size=szT, text_halign=text.align_right, text_valign=text.align_top)
-
 // ═════════════════════════ PIN BARS (yellow candles) ═════════════════════════
 pinRng = high - low
 pinUpW = pinRng > 0 ? (high - math.max(open, close)) / pinRng * 100 : 0
@@ -1989,24 +1943,8 @@ if useSc
 trgLoOk = useSc ? locLoOk and scOkL : locLoOk and tgNL >= tgNeed and trgLoBar >= locLoBar and bar_index - trgLoBar <= chkWin
 trgHiOk = useSc ? locHiOk and scOkS : locHiOk and tgNS >= tgNeed and trgHiBar >= locHiBar and bar_index - trgHiBar <= chkWin
 
-var table ck = table.new(scPos, 3, 8, bgcolor=color.new(#131722, 5), border_color=color.new(color.gray, 70), border_width=1, frame_color=color.new(color.yellow, 40), frame_width=1)
-f_ck(int r, string k, string v, bool ok, string st) =>
-    table.cell(ck, 0, r, k, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 1, r, v, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, r, st, bgcolor=ok ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
 chkLo4 = ta.lowest(low, 4)
 chkHi4 = ta.highest(high, 4)
-var string ckHead = "waiting for the first closed bar"
-var string ckT1 = ""
-var string ckT2 = ""
-var string ckT3 = ""
-var string ckT4 = ""
-var string ckRes = ""
-var bool ckO1 = false
-var bool ckO2 = false
-var bool ckO3 = false
-var bool ckO4 = false
-var bool ckGo = false
 f_chkTgt(int d, float slC) =>
     tv = array.new_float()
     tn = array.new_string()
@@ -2049,7 +1987,7 @@ bool goNow = false
 int goDir = 0
 float goSL = na
 float goTP = na
-if showChk and barstate.isconfirmed
+if barstate.isconfirmed
     d = chkDir
     locOk = d == 1 ? locLoOk : d == -1 ? locHiOk : false
     trgOk = d == 1 ? trgLoOk : d == -1 ? trgHiOk : false
@@ -2060,18 +1998,6 @@ if showChk and barstate.isconfirmed
     rr = d == 0 or na(tgt) or risk <= 0 ? na : math.abs(tgt - close) / risk
     rrOk = not na(rr) and rr >= chkMinRR
     allOk = d != 0 and locOk and trgOk and rrOk
-    dn = d == 1 ? "LONG" : d == -1 ? "SHORT" : "NONE"
-    ckHead := "candidate: " + dn + "  |  close " + str.tostring(close, format.mintick) + "  |  candle " + str.format_time(time, "HH:mm", "Asia/Tehran") + "–" + str.format_time(time_close, "HH:mm", "Asia/Tehran") + "  ·  next check " + str.format_time(time_close + (time_close - time), "HH:mm", "Asia/Tehran")
-    ckT1 := "HTF " + (htfDir == 1 ? "▲" : htfDir == -1 ? "▼" : "–") + "  ST " + (stState == 1 ? "▲" : "▼") + "  AMD " + (amdState == 1 ? "▲" : amdState == -1 ? "▼" : "–") + "  (need 2 of 3)"
-    ckO1 := d != 0
-    ckT2 := d == 1 ? (locLoOk ? locLoTxt + "  (" + str.tostring(bar_index - locLoBar) + " bars ago)" : "no support tagged in last " + str.tostring(chkWin) + " bars") : d == -1 ? (locHiOk ? locHiTxt + "  (" + str.tostring(bar_index - locHiBar) + " bars ago)" : "no resistance tagged in last " + str.tostring(chkWin) + " bars") : "—"
-    ckO2 := locOk
-    ckT3 := d == 1 ? (trgLoOk ? trgLoTxt : (useSc ? trgLoTxt : "need " + str.tostring(tgNeed) + " of 3 (pin▲ / TL▲ / REV▲): " + (tgNL == 0 ? "none" : trgLoTxt))) : d == -1 ? (trgHiOk ? trgHiTxt : (useSc ? trgHiTxt : "need " + str.tostring(tgNeed) + " of 3 (pin▼ / TL▼ / REV▼): " + (tgNS == 0 ? "none" : trgHiTxt))) : "—"
-    ckO3 := trgOk
-    ckT4 := d == 0 ? "—" : "SL " + str.tostring(slC, format.mintick) + "  ·  TP " + (na(tgt) ? "—" : str.tostring(tgt, format.mintick) + " (" + tgtN + ")") + "  ·  R:R " + (na(rr) ? "—" : str.tostring(rr, "#.#")) + "  (min " + str.tostring(chkMinRR, "#.#") + ")"
-    ckO4 := rrOk
-    ckRes := allOk ? (d == 1 ? "BUY allowed" : "SELL allowed") + " at " + str.tostring(close, format.mintick) + "  ·  SL " + str.tostring(slC, format.mintick) + "  ·  TP " + str.tostring(tgt, format.mintick) : "NO TRADE — not all checks passed"
-    ckGo := allOk
     goNow := allOk
     goDir := d
     goSL := slC
@@ -2130,28 +2056,17 @@ if barstate.isconfirmed and goNew and not na(goTP) and not na(goSL) and array.si
     array.push(sgTP, goTP)
     array.push(sgLbl, label.new(bar_index, goDir == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, goDir == 1 ? "SIG▲" : "SIG▼", style=goDir == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.yellow, 20), textcolor=color.black, tooltip="SIG  entry " + str.tostring(close, format.mintick) + "  SL " + str.tostring(goSL, format.mintick) + "  TP " + str.tostring(goTP, format.mintick) + "  |  " + (goDir == 1 ? trgLoTxt : trgHiTxt)))
 f_stTxt(int n, int w, float r) => n == 0 ? "no trades yet" : str.tostring(n) + " trades  ·  win " + str.tostring(100.0 * w / n, "#") + "%  ·  avg " + str.tostring(r / n, "#.##") + "R  ·  total " + str.tostring(r, "#.#") + "R"
-f_draw2121() =>
+f_drawSig() =>
     sN = array.size(sgDir)
-    sBridge = sN > 0 ? "  |  SIG#" + str.tostring(label.get_x(array.get(sgLbl, sN - 1))) + " " + (array.get(sgDir, sN - 1) == 1 ? "BUY @" : "SELL @") + fmt(array.get(sgE, sN - 1)) + " SL:" + fmt(array.get(sgSL, sN - 1)) + " TP:" + fmt(array.get(sgTP, sN - 1)) : ""
-    table.cell(ck, 0, 0, "ENTRY CHECKLIST", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 1, 0, ckHead + sBridge, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 0, "", text_size=szT)
-    f_ck(1, "1  Direction", ckT1, ckO1, ckO1 ? "OK" : "NO")
-    f_ck(2, "2  Location", ckT2, ckO2, ckO2 ? "OK" : "NO")
-    f_ck(3, "3  Trigger", ckT3, ckO3, ckO3 ? "OK" : "NO")
-    f_ck(4, "4  Stop / target", ckT4, ckO4, ckO4 ? "OK" : "NO")
-    table.cell(ck, 0, 5, "5  News", text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 1, 5, "check the economic calendar manually (no high-impact news within 30 min)", text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 5, "MANUAL", bgcolor=color.new(color.orange, 30), text_color=color.black, text_size=szT)
-    table.cell(ck, 0, 6, "RESULT", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 1, 6, ckRes, text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 6, ckGo ? "GO" : "WAIT", bgcolor=ckGo ? color.new(cBull, 10) : color.new(cBear, 10), text_color=color.white, text_size=szT)
-    table.cell(ck, 0, 7, "SIG STATS since " + str.format_time(stT0, "yyyy-MM-dd", "Asia/Tehran"), text_color=color.yellow, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 1, 7, f_stTxt(nAll, wAll, rAll) + "  ·  max DD " + str.tostring(ddR, "#.#") + "R  ·  $ net " + (usdW - usdL >= 0 ? "+" : "−") + str.tostring(math.abs(usdW - usdL), "#.#") + " (win +" + str.tostring(usdW, "#.#") + " / loss −" + str.tostring(usdL, "#.#") + ", per 1 oz)" + (sN > 0 ? "  ·  " + str.tostring(sN) + " open" : ""), text_color=color.white, text_size=szT, text_halign=text.align_left)
-    table.cell(ck, 2, 7, nAll == 0 ? "—" : rAll > 0 ? "+" : "−", bgcolor=nAll == 0 ? color.new(color.gray, 50) : rAll > 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
+    table.cell(tb, 0, 16, "SIG STATS since " + str.format_time(stT0, "yyyy-MM-dd", "Asia/Tehran"), text_color=color.yellow, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 1, 16, f_stTxt(nAll, wAll, rAll) + "  ·  max DD " + str.tostring(ddR, "#.#") + "R" + (sN > 0 ? "  ·  " + str.tostring(sN) + " open" : ""), text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 2, 16, nAll == 0 ? "—" : rAll > 0 ? "+" : "−", bgcolor=nAll == 0 ? color.new(color.gray, 50) : rAll > 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
+    table.cell(tb, 0, 17, "SIG $ P/L", text_color=color.yellow, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 1, 17, "win +$" + str.tostring(usdW, "#.#") + "  /  loss −$" + str.tostring(usdL, "#.#") + "  (per 1 oz)", text_color=color.white, text_size=szT, text_halign=text.align_left)
+    table.cell(tb, 2, 17, (usdW - usdL >= 0 ? "+$" : "−$") + str.tostring(math.abs(usdW - usdL), "#.#"), bgcolor=usdW - usdL >= 0 ? color.new(cBull, 25) : color.new(cBear, 25), text_color=color.white, text_size=szT)
     0
-if barstate.islast and showChk
-    f_draw2121()
+if barstate.islast and showTable
+    f_drawSig()
 
 // ═════════════════════════ REV SETUP (liquidity sweep → TL break, any direction) ═════════════════════════
 amdLoLv = postAcc ? accLo : na
