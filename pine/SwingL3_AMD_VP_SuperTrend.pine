@@ -154,6 +154,7 @@ revMax      = input.int(3, "REV: max simultaneous trades", minval=1, maxval=10, 
 revBe       = input.float(0.0, "REV: break-even after profit ($, 0 = off)", minval=0, step=0.5, group=grpD, tooltip="Once price has moved this far in favour, the stop moves to entry (applied from the next candle). A stop hit after that counts as 0R.")
 revBig      = input.float(1.5, "REV: big trigger candle (x ATR) → limit at candle middle", minval=0.5, step=0.1, group=grpD)
 chkMinRR    = input.float(1.5, "Checklist: min R:R", minval=0.5, step=0.1, group=grpD)
+sigTpR      = input.float(0.0, "SIG TP: fixed R multiple (0 = structure levels)", minval=0.0, step=0.1, group=grpD, tooltip="0 = TP is the nearest structure level (L1/L2/L3/HTF/VAH/VAL/PDH/PDL) with at least the min R:R. Any value above 0 = TP is exactly this many R from entry (e.g. 2.0 = 2R). Keep it at or above the min R:R, otherwise the signal is rejected.")
 planSlBuf   = input.float(0.25, "Scenario stop buffer beyond level (x ATR)", minval=0, step=0.05, group=grpD, tooltip="Gold 15m: wicks often overshoot swing levels by 0.1–0.2 ATR (stop hunts).")
 planCtr     = input.bool(true, "Block counter-trend side when confluence >= threshold", group=grpD)
 planExp     = input.int(20, "Scenario plan expiry (bars) if nothing triggers", minval=10, maxval=1000, group=grpD, tooltip="15m: 20 bars = 5 hours. A level not reached within a session is usually stale.")
@@ -2027,7 +2028,10 @@ f_chkTgt(int d, float slC) =>
     float tgt = na
     string tgtN = "—"
     float pxRef = d == 1 ? close + atr14 * 0.3 : close - atr14 * 0.3
-    if d != 0 and risk > 0
+    if d != 0 and risk > 0 and sigTpR > 0
+        tgt := d == 1 ? close + risk * sigTpR : close - risk * sigTpR
+        tgtN := str.tostring(sigTpR, "#.#") + "R fixed"
+    else if d != 0 and risk > 0
         for k = 0 to 3
             [tAx, tAxn] = f_above(tv, tn, pxRef)
             [tBx, tBxn] = f_below(tv, tn, pxRef)
