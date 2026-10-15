@@ -12,7 +12,9 @@
 #property description "Use a demo account and broker-specific testing before live use."
 
 // --- Symbol and execution ----------------------------------------------------
-input string            InpSymbol                    = "XAUUSD";
+// Leave empty to trade the chart/tester symbol. Set a value only when the EA
+// must deliberately trade a different broker symbol, e.g. XAUUSDm or GOLD.
+input string            InpSymbol                    = "";
 input ENUM_TIMEFRAMES   InpSignalTimeframe           = PERIOD_M15;
 input int               InpMagicNumber               = 260115;
 input string            InpOrderComment              = "SMC XAU M15";
@@ -131,13 +133,13 @@ int OnInit() {
     return(INIT_PARAMETERS_INCORRECT);
   }
 
-  g_symbol = InpSymbol;
-  if (StringLen(g_symbol) == 0) {
-    g_symbol = Symbol();
-  }
-
-  if (!SymbolSelect(g_symbol, true)) {
-    Print("Unable to select symbol ", g_symbol, ". Change InpSymbol to the broker symbol.");
+  // Strategy Tester can reject SymbolSelect() for the tester's own symbol,
+  // even though its quotes/history are already available. Use the chart symbol
+  // directly unless the user explicitly requests a different symbol.
+  g_symbol = StringLen(InpSymbol) == 0 ? Symbol() : InpSymbol;
+  if (g_symbol != Symbol() && !SymbolSelect(g_symbol, true)) {
+    Print("Unable to select requested symbol ", g_symbol,
+          ". Leave InpSymbol empty to use the tester/chart symbol, or use the broker's exact symbol name.");
     return(INIT_FAILED);
   }
 

@@ -44,7 +44,7 @@ When `Require order-block overlap` is enabled, the FVG must overlap the last opp
 
 1. Copy `SMC_XAUUSD_M15_EA.mq4` to `MQL4/Experts/` and compile it in MetaEditor.
 2. Attach the EA to an M15 chart and enable AutoTrading.
-3. If the broker uses a different symbol name, edit only `InpSymbol`; examples include `XAUUSDm` and `GOLD`.
+3. Leave `InpSymbol` empty to use the Strategy Tester/chart symbol. Set it only when deliberately trading a different broker symbol; examples include `XAUUSDm` and `GOLD`.
 4. Before any live use, confirm in the Journal that `MODE_TICKVALUE` and `MODE_TICKSIZE` are valid. The EA uses them to calculate the 1% risk lot size.
 5. `InpMaxSpreadPrice=0.80` is in **gold price units**, not broker points. Adjust it to the actual spread of the broker.
 
