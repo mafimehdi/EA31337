@@ -1,0 +1,380 @@
+//@version=6
+// SMC XAUUSD M15 Strategy
+// Mechanical definition used by the companion MT4 EA:
+// H1/H4 trend bias -> M15 liquidity sweep -> M15 market-structure shift
+// -> displacement FVG -> first CE retest, with Range Filter / EMA / CHOP filters.
+// Apply to a standard-candle XAUUSD 15-minute chart.
+
+strategy(
+     title="SMC XAUUSD M15 | Sweep-MSS-FVG Strategy",
+     shorttitle="SMC XAU M15",
+     overlay=true,
+     pyramiding=0,
+     initial_capital=10000,
+     currency=currency.USD,
+     calc_on_order_fills=true,
+     process_orders_on_close=true,
+     max_labels_count=500,
+     max_lines_count=500)
+
+// -----------------------------------------------------------------------------
+// Inputs
+// -----------------------------------------------------------------------------
+groupExecution = "01. Execution and risk"
+riskPercent = input.float(1.0, "Risk per trade (%)", minval=0.1, maxval=10.0, step=0.1, group=groupExecution)
+rewardRisk = input.float(2.0, "Take-profit (R multiple)", minval=1.0, maxval=10.0, step=0.1, group=groupExecution)
+breakEvenAtR = input.float(1.0, "Move stop to breakeven at R", minval=0.0, maxval=5.0, step=0.1, group=groupExecution)
+breakEvenLockR = input.float(0.0, "Breakeven lock-in (R)", minval=0.0, maxval=1.0, step=0.05, group=groupExecution)
+maxStrategyQty = input.float(1000.0, "Maximum strategy quantity", minval=0.001, step=0.001, group=groupExecution,
+     tooltip="TradingView quantity is symbol/feed dependent. Verify its contract multiplier before relying on backtest sizing.")
+
+useSessionFilter = input.bool(false, "Use trading-session filter", group=groupExecution)
+tradeSession = input.session("0000-2359:1234567", "Session (UTC)", group=groupExecution)
+avoidFridayClose = input.bool(false, "Block new entries late Friday", group=groupExecution)
+fridayCutoffUtc = input.int(20, "Friday cutoff hour (UTC)", minval=0, maxval=23, group=groupExecution)
+
+// This strategy is deliberately tied to M15. The HTF values below use only
+// completed H1/H4 candles, so their values do not repaint during an M15 bar.
+groupBias = "02. Higher-timeframe bias"
+h1Timeframe = input.timeframe("60", "First bias timeframe", group=groupBias)
+h4Timeframe = input.timeframe("240", "Second bias timeframe", group=groupBias)
+htfFastLength = input.int(50, "HTF fast EMA", minval=1, group=groupBias)
+htfSlowLength = input.int(200, "HTF slow EMA", minval=2, group=groupBias)
+
+// The range filter is an ATR-scaled version of the DW / Type 1 Range Filter.
+groupTrend = "03. M15 trend and regime filters"
+emaLength = input.int(200, "M15 EMA filter", minval=1, group=groupTrend)
+rangePeriod = input.int(14, "Range true-range EMA period", minval=1, group=groupTrend)
+rangeSmoothPeriod = input.int(21, "Range smoothing period", minval=1, group=groupTrend)
+rangeMultiplier = input.float(1.30, "Range size (ATR multiplier)", minval=0.1, step=0.05, group=groupTrend)
+chopLength = input.int(14, "Choppiness length", minval=2, group=groupTrend)
+chopLimit = input.float(58.0, "Maximum Choppiness", minval=1.0, maxval=99.0, step=0.1, group=groupTrend)
+
+// A sweep must take a prior liquidity high/low and then close back through it.
+groupStructure = "04. Sweep and market-structure shift"
+atrLength = input.int(14, "ATR length", minval=1, group=groupStructure)
+liquidityLookback = input.int(12, "Liquidity lookback (M15 bars)", minval=3, group=groupStructure)
+minimumSweepATR = input.float(0.10, "Minimum sweep depth (ATR)", minval=0.0, step=0.05, group=groupStructure)
+swingLength = input.int(5, "Confirmed swing length", minval=2, group=groupStructure)
+sweepToMssBars = input.int(8, "Maximum bars from sweep to MSS", minval=1, group=groupStructure)
+
+// A FVG is only recorded after an MSS and is traded once on its first CE retest.
+groupFvg = "05. Fair-value gap and POI"
+minimumFvgATR = input.float(0.20, "Minimum FVG size (ATR)", minval=0.0, step=0.05, group=groupFvg)
+mssToFvgBars = input.int(3, "Maximum bars from MSS to FVG", minval=0, group=groupFvg)
+fvgMaxAgeBars = input.int(12, "Maximum FVG age (M15 bars)", minval=1, group=groupFvg)
+requireOrderBlockConfluence = input.bool(false, "Require order-block overlap", group=groupFvg,
+     tooltip="When enabled, the FVG must overlap the most recent opposite-colour candle before the MSS. It is much more selective.")
+orderBlockLookback = input.int(12, "Order-block search bars", minval=1, group=groupFvg)
+useOrderBlockWicks = input.bool(false, "Use candle wicks for order block", group=groupFvg)
+
+// Stops are always beyond the swept high/low. ATR bounds prevent tiny and
+// abnormally wide trades.
+groupStops = "06. Stop validation"
+stopBufferATR = input.float(0.10, "Sweep stop buffer (ATR)", minval=0.0, step=0.05, group=groupStops)
+minimumStopATR = input.float(0.50, "Minimum stop distance (ATR)", minval=0.1, step=0.05, group=groupStops)
+maximumStopATR = input.float(3.00, "Maximum stop distance (ATR)", minval=0.5, step=0.10, group=groupStops)
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+f_lastBearishOrderBlock(_lookback, _useWicks) =>
+    float obLow = na
+    float obHigh = na
+    for i = 1 to _lookback
+        if na(obLow) and close[i] < open[i]
+            obLow := _useWicks ? low[i] : close[i]
+            obHigh := _useWicks ? high[i] : open[i]
+    [obLow, obHigh]
+
+f_lastBullishOrderBlock(_lookback, _useWicks) =>
+    float obLow = na
+    float obHigh = na
+    for i = 1 to _lookback
+        if na(obLow) and close[i] > open[i]
+            obLow := _useWicks ? low[i] : open[i]
+            obHigh := _useWicks ? high[i] : close[i]
+    [obLow, obHigh]
+
+f_zonesOverlap(_lowA, _highA, _lowB, _highB) =>
+    not na(_lowA) and not na(_highA) and not na(_lowB) and not na(_highB) and math.max(_lowA, _lowB) <= math.min(_highA, _highB)
+
+f_positionSize(_entry, _stop) =>
+    riskCash = strategy.equity * riskPercent / 100.0
+    riskPerUnit = math.abs(_entry - _stop) * math.max(syminfo.pointvalue, 0.0000001)
+    rawQuantity = riskPerUnit > 0 ? riskCash / riskPerUnit : 0.0
+    math.min(rawQuantity, maxStrategyQty)
+
+// -----------------------------------------------------------------------------
+// Non-repainting H1/H4 bias: every value is from the last completed HTF candle.
+// -----------------------------------------------------------------------------
+h1Close = request.security(syminfo.tickerid, h1Timeframe, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+h1Fast = request.security(syminfo.tickerid, h1Timeframe, ta.ema(close, htfFastLength)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+h1Slow = request.security(syminfo.tickerid, h1Timeframe, ta.ema(close, htfSlowLength)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+h4Close = request.security(syminfo.tickerid, h4Timeframe, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+h4Fast = request.security(syminfo.tickerid, h4Timeframe, ta.ema(close, htfFastLength)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+h4Slow = request.security(syminfo.tickerid, h4Timeframe, ta.ema(close, htfSlowLength)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+htfBull = h1Close > h1Fast and h1Fast > h1Slow and h4Close > h4Fast and h4Fast > h4Slow
+htfBear = h1Close < h1Fast and h1Fast < h1Slow and h4Close < h4Fast and h4Fast < h4Slow
+
+// -----------------------------------------------------------------------------
+// M15 filters
+// -----------------------------------------------------------------------------
+isM15 = timeframe.isminutes and timeframe.multiplier == 15
+atr = ta.atr(atrLength)
+ema200 = ta.ema(close, emaLength)
+
+rangeTrEma = ta.ema(ta.tr(true), rangePeriod)
+rangeSize = ta.ema(rangeTrEma, rangeSmoothPeriod) * rangeMultiplier
+var float rangeFilter = na
+rangeFilter := na(rangeFilter[1]) ? close : close - rangeSize > rangeFilter[1] ? close - rangeSize : close + rangeSize < rangeFilter[1] ? close + rangeSize : rangeFilter[1]
+var int rangeDirection = 0
+rangeDirection := rangeFilter > rangeFilter[1] ? 1 : rangeFilter < rangeFilter[1] ? -1 : nz(rangeDirection[1], 0)
+rangeBull = rangeDirection == 1
+rangeBear = rangeDirection == -1
+
+chopRange = ta.highest(high, chopLength) - ta.lowest(low, chopLength)
+chop = chopRange > 0 ? 100.0 * math.log10(math.sum(ta.tr(true), chopLength) / chopRange) / math.log10(chopLength) : na
+regimeOK = not na(chop) and chop < chopLimit
+
+sessionOK = not useSessionFilter or not na(time(timeframe.period, tradeSession, "Etc/UTC"))
+fridayBlocked = avoidFridayClose and dayofweek == dayofweek.friday and hour(time, "Etc/UTC") >= fridayCutoffUtc
+executionOK = isM15 and sessionOK and not fridayBlocked
+
+// -----------------------------------------------------------------------------
+// Confirmed M15 swings and SMC state machine
+// -----------------------------------------------------------------------------
+pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+pivotLow = ta.pivotlow(low, swingLength, swingLength)
+var float lastSwingHigh = na
+var float lastSwingLow = na
+if not na(pivotHigh)
+    lastSwingHigh := pivotHigh
+if not na(pivotLow)
+    lastSwingLow := pivotLow
+
+priorLiquidityLow = ta.lowest(low[1], liquidityLookback)
+priorLiquidityHigh = ta.highest(high[1], liquidityLookback)
+bullSweep = barstate.isconfirmed and not na(priorLiquidityLow) and low < priorLiquidityLow - atr * minimumSweepATR and close > priorLiquidityLow and close > open
+bearSweep = barstate.isconfirmed and not na(priorLiquidityHigh) and high > priorLiquidityHigh + atr * minimumSweepATR and close < priorLiquidityHigh and close < open
+
+var int bullSweepBar = na
+var int bearSweepBar = na
+var float bullSweepLow = na
+var float bearSweepHigh = na
+if bullSweep
+    bullSweepBar := bar_index
+    bullSweepLow := low
+if bearSweep
+    bearSweepBar := bar_index
+    bearSweepHigh := high
+if not na(bullSweepBar) and bar_index - bullSweepBar > sweepToMssBars
+    bullSweepBar := na
+    bullSweepLow := na
+if not na(bearSweepBar) and bar_index - bearSweepBar > sweepToMssBars
+    bearSweepBar := na
+    bearSweepHigh := na
+
+bullMss = not na(bullSweepBar) and bar_index > bullSweepBar and bar_index - bullSweepBar <= sweepToMssBars and not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+bearMss = not na(bearSweepBar) and bar_index > bearSweepBar and bar_index - bearSweepBar <= sweepToMssBars and not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+
+var int bullMssBar = na
+var int bearMssBar = na
+var float bullMssSweepLow = na
+var float bearMssSweepHigh = na
+var float bullObLow = na
+var float bullObHigh = na
+var float bearObLow = na
+var float bearObHigh = na
+if bullMss
+    bullMssBar := bar_index
+    bullMssSweepLow := bullSweepLow
+    [bullCandidateObLow, bullCandidateObHigh] = f_lastBearishOrderBlock(orderBlockLookback, useOrderBlockWicks)
+    bullObLow := bullCandidateObLow
+    bullObHigh := bullCandidateObHigh
+if bearMss
+    bearMssBar := bar_index
+    bearMssSweepHigh := bearSweepHigh
+    [bearCandidateObLow, bearCandidateObHigh] = f_lastBullishOrderBlock(orderBlockLookback, useOrderBlockWicks)
+    bearObLow := bearCandidateObLow
+    bearObHigh := bearCandidateObHigh
+if not na(bullMssBar) and bar_index - bullMssBar > mssToFvgBars
+    bullMssBar := na
+    bullMssSweepLow := na
+if not na(bearMssBar) and bar_index - bearMssBar > mssToFvgBars
+    bearMssBar := na
+    bearMssSweepHigh := na
+
+bullFvgNew = not na(bullMssBar) and bar_index - bullMssBar <= mssToFvgBars and not na(high[2]) and low > high[2] and low - high[2] >= atr * minimumFvgATR
+bearFvgNew = not na(bearMssBar) and bar_index - bearMssBar <= mssToFvgBars and not na(low[2]) and high < low[2] and low[2] - high >= atr * minimumFvgATR
+
+var int bullFvgBar = na
+var int bearFvgBar = na
+var float bullFvgLow = na
+var float bullFvgHigh = na
+var float bullFvgMid = na
+var float bearFvgLow = na
+var float bearFvgHigh = na
+var float bearFvgMid = na
+var float bullFvgSweepLow = na
+var float bearFvgSweepHigh = na
+var bool bullFvgObOK = false
+var bool bearFvgObOK = false
+
+if bullFvgNew
+    bullFvgBar := bar_index
+    bullFvgLow := high[2]
+    bullFvgHigh := low
+    bullFvgMid := math.avg(bullFvgLow, bullFvgHigh)
+    bullFvgSweepLow := bullMssSweepLow
+    bullFvgObOK := not requireOrderBlockConfluence or f_zonesOverlap(bullFvgLow, bullFvgHigh, bullObLow, bullObHigh)
+    // Only the first displacement FVG after an MSS is the POI for this setup.
+    bullMssBar := na
+    bullMssSweepLow := na
+if bearFvgNew
+    bearFvgBar := bar_index
+    bearFvgLow := high
+    bearFvgHigh := low[2]
+    bearFvgMid := math.avg(bearFvgLow, bearFvgHigh)
+    bearFvgSweepHigh := bearMssSweepHigh
+    bearFvgObOK := not requireOrderBlockConfluence or f_zonesOverlap(bearFvgLow, bearFvgHigh, bearObLow, bearObHigh)
+    bearMssBar := na
+    bearMssSweepHigh := na
+
+bullFvgExpired = not na(bullFvgBar) and bar_index - bullFvgBar > fvgMaxAgeBars
+bearFvgExpired = not na(bearFvgBar) and bar_index - bearFvgBar > fvgMaxAgeBars
+bullFvgInvalidated = not na(bullFvgBar) and low <= bullFvgLow
+bearFvgInvalidated = not na(bearFvgBar) and high >= bearFvgHigh
+
+// The first CE retest is the only tradable retest. A full fill invalidates it.
+bullFvgRetest = not na(bullFvgBar) and bar_index > bullFvgBar and bar_index - bullFvgBar <= fvgMaxAgeBars and not bullFvgInvalidated and low <= bullFvgMid and close > bullFvgMid and close > open
+bearFvgRetest = not na(bearFvgBar) and bar_index > bearFvgBar and bar_index - bearFvgBar <= fvgMaxAgeBars and not bearFvgInvalidated and high >= bearFvgMid and close < bearFvgMid and close < open
+
+longSweepStop = bullFvgSweepLow - atr * stopBufferATR
+shortSweepStop = bearFvgSweepHigh + atr * stopBufferATR
+// If the swept extreme is too close, expand the stop to the configured
+// minimum ATR distance. This is also how the MT4 EA handles a tight stop.
+longStop = not na(longSweepStop) ? math.min(longSweepStop, close - atr * minimumStopATR) : na
+shortStop = not na(shortSweepStop) ? math.max(shortSweepStop, close + atr * minimumStopATR) : na
+longRisk = close - longStop
+shortRisk = shortStop - close
+longStopValid = not na(longStop) and longRisk > 0 and longRisk <= atr * maximumStopATR
+shortStopValid = not na(shortStop) and shortRisk > 0 and shortRisk <= atr * maximumStopATR
+
+longSignal = barstate.isconfirmed and executionOK and htfBull and close > ema200 and rangeBull and regimeOK and bullFvgObOK and bullFvgRetest and longStopValid
+shortSignal = barstate.isconfirmed and executionOK and htfBear and close < ema200 and rangeBear and regimeOK and bearFvgObOK and bearFvgRetest and shortStopValid
+
+// Retests are consumed whether or not the final trend filters allow an entry.
+if bullFvgExpired or bullFvgInvalidated or bullFvgRetest
+    bullFvgBar := na
+    bullFvgLow := na
+    bullFvgHigh := na
+    bullFvgMid := na
+    bullFvgSweepLow := na
+    bullFvgObOK := false
+if bearFvgExpired or bearFvgInvalidated or bearFvgRetest
+    bearFvgBar := na
+    bearFvgLow := na
+    bearFvgHigh := na
+    bearFvgMid := na
+    bearFvgSweepHigh := na
+    bearFvgObOK := false
+
+// -----------------------------------------------------------------------------
+// Orders and R-based management
+// -----------------------------------------------------------------------------
+var float activeLongStop = na
+var float activeShortStop = na
+var float activeLongRisk = na
+var float activeShortRisk = na
+var bool longAtBreakeven = false
+var bool shortAtBreakeven = false
+
+if longSignal and strategy.position_size == 0
+    quantity = f_positionSize(close, longStop)
+    if quantity > 0
+        activeLongStop := longStop
+        activeLongRisk := close - longStop
+        longAtBreakeven := false
+        strategy.entry("Long", strategy.long, qty=quantity, alert_message="SMC_XAUUSD_M15_LONG")
+        strategy.exit("Long Exit", "Long", stop=longStop, limit=close + activeLongRisk * rewardRisk, alert_message="SMC_XAUUSD_M15_LONG_EXIT")
+
+if shortSignal and strategy.position_size == 0
+    quantity = f_positionSize(close, shortStop)
+    if quantity > 0
+        activeShortStop := shortStop
+        activeShortRisk := shortStop - close
+        shortAtBreakeven := false
+        strategy.entry("Short", strategy.short, qty=quantity, alert_message="SMC_XAUUSD_M15_SHORT")
+        strategy.exit("Short Exit", "Short", stop=shortStop, limit=close - activeShortRisk * rewardRisk, alert_message="SMC_XAUUSD_M15_SHORT_EXIT")
+
+if strategy.position_size > 0
+    entryPrice = strategy.position_avg_price
+    initialRisk = nz(activeLongRisk, entryPrice - activeLongStop)
+    longAtBreakeven := longAtBreakeven or high >= entryPrice + initialRisk * breakEvenAtR
+    liveLongStop = longAtBreakeven ? math.max(activeLongStop, entryPrice + initialRisk * breakEvenLockR) : activeLongStop
+    strategy.exit("Long Exit", "Long", stop=liveLongStop, limit=entryPrice + initialRisk * rewardRisk, alert_message="SMC_XAUUSD_M15_LONG_EXIT")
+
+if strategy.position_size < 0
+    entryPrice = strategy.position_avg_price
+    initialRisk = nz(activeShortRisk, activeShortStop - entryPrice)
+    shortAtBreakeven := shortAtBreakeven or low <= entryPrice - initialRisk * breakEvenAtR
+    liveShortStop = shortAtBreakeven ? math.min(activeShortStop, entryPrice - initialRisk * breakEvenLockR) : activeShortStop
+    strategy.exit("Short Exit", "Short", stop=liveShortStop, limit=entryPrice - initialRisk * rewardRisk, alert_message="SMC_XAUUSD_M15_SHORT_EXIT")
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    activeLongStop := na
+    activeShortStop := na
+    activeLongRisk := na
+    activeShortRisk := na
+    longAtBreakeven := false
+    shortAtBreakeven := false
+
+// -----------------------------------------------------------------------------
+// Visual diagnostics
+// -----------------------------------------------------------------------------
+plot(ema200, "M15 EMA", color=color.new(color.white, 0), linewidth=2)
+plot(rangeFilter, "Range Filter", color=rangeBull ? color.lime : rangeBear ? color.red : color.orange, linewidth=2)
+plot(lastSwingHigh, "Last confirmed swing high", color=color.new(color.red, 72), style=plot.style_linebr)
+plot(lastSwingLow, "Last confirmed swing low", color=color.new(color.lime, 72), style=plot.style_linebr)
+
+bullFvgHighPlot = not na(bullFvgBar) ? bullFvgHigh : na
+bullFvgLowPlot = not na(bullFvgBar) ? bullFvgLow : na
+bearFvgHighPlot = not na(bearFvgBar) ? bearFvgHigh : na
+bearFvgLowPlot = not na(bearFvgBar) ? bearFvgLow : na
+pBullHigh = plot(bullFvgHighPlot, "Bullish FVG high", color=color.new(color.aqua, 40), style=plot.style_linebr)
+pBullLow = plot(bullFvgLowPlot, "Bullish FVG low", color=color.new(color.aqua, 40), style=plot.style_linebr)
+pBearHigh = plot(bearFvgHighPlot, "Bearish FVG high", color=color.new(color.orange, 40), style=plot.style_linebr)
+pBearLow = plot(bearFvgLowPlot, "Bearish FVG low", color=color.new(color.orange, 40), style=plot.style_linebr)
+fill(pBullHigh, pBullLow, color=color.new(color.aqua, 87), title="Bullish FVG")
+fill(pBearHigh, pBearLow, color=color.new(color.orange, 87), title="Bearish FVG")
+
+plotshape(bullSweep, title="Sell-side liquidity sweep", text="SSL", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.aqua)
+plotshape(bearSweep, title="Buy-side liquidity sweep", text="BSL", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.orange)
+plotshape(bullMss, title="Bullish MSS", text="MSS+", style=shape.labelup, location=location.belowbar, size=size.tiny, color=color.new(color.green, 0), textcolor=color.white)
+plotshape(bearMss, title="Bearish MSS", text="MSS-", style=shape.labeldown, location=location.abovebar, size=size.tiny, color=color.new(color.red, 0), textcolor=color.white)
+plotshape(longSignal, title="Long setup", text="LONG", style=shape.labelup, location=location.belowbar, size=size.small, color=color.new(color.green, 0), textcolor=color.white)
+plotshape(shortSignal, title="Short setup", text="SHORT", style=shape.labeldown, location=location.abovebar, size=size.small, color=color.new(color.red, 0), textcolor=color.white)
+
+// In a strategy, create the TradingView alert using either "Order fills" or
+// "Any alert() function call". Both paths are bar-close only.
+if longSignal
+    alert("SMC_XAUUSD_M15_LONG", alert.freq_once_per_bar_close)
+if shortSignal
+    alert("SMC_XAUUSD_M15_SHORT", alert.freq_once_per_bar_close)
+
+var table status = table.new(position.top_right, 2, 6, border_width=1)
+if barstate.islast
+    table.cell(status, 0, 0, "SMC XAU M15", text_color=color.white, bgcolor=color.rgb(40, 44, 52))
+    table.cell(status, 1, 0, isM15 ? "M15" : "USE M15", text_color=color.white, bgcolor=isM15 ? color.rgb(33, 112, 70) : color.rgb(170, 65, 50))
+    table.cell(status, 0, 1, "H1 / H4 bias", text_color=color.white)
+    table.cell(status, 1, 1, htfBull ? "BULL" : htfBear ? "BEAR" : "NEUTRAL", text_color=htfBull ? color.lime : htfBear ? color.red : color.silver)
+    table.cell(status, 0, 2, "Range filter", text_color=color.white)
+    table.cell(status, 1, 2, rangeBull ? "UP" : rangeBear ? "DOWN" : "FLAT", text_color=rangeBull ? color.lime : rangeBear ? color.red : color.silver)
+    table.cell(status, 0, 3, "Choppiness", text_color=color.white)
+    table.cell(status, 1, 3, str.tostring(chop, "#.0") + " / " + str.tostring(chopLimit), text_color=regimeOK ? color.lime : color.orange)
+    table.cell(status, 0, 4, "Bull / Bear FVG", text_color=color.white)
+    table.cell(status, 1, 4, (not na(bullFvgBar) ? "BULL " : "") + (not na(bearFvgBar) ? "BEAR" : ""), text_color=color.aqua)
+    table.cell(status, 0, 5, "Execution", text_color=color.white)
+    table.cell(status, 1, 5, executionOK ? "READY" : "BLOCKED", text_color=executionOK ? color.lime : color.orange)
