@@ -1909,7 +1909,17 @@ var sgE   = array.new_float()
 var sgSL  = array.new_float()
 var sgTP  = array.new_float()
 var sgLbl = array.new_label()
+// per SIG: green box entry->TP and red box entry->SL; they end on the bar where the SIG is closed
+var box[] sgBG = array.new_box()
+var box[] sgBR = array.new_box()
+f_sigBox(float e, float sl, float tp) =>
+    array.push(sgBG, box.new(bar_index, math.max(e, tp), bar_index, math.min(e, tp), border_color=color.new(cBull, 40), bgcolor=color.new(cBull, 85)))
+    array.push(sgBR, box.new(bar_index, math.max(e, sl), bar_index, math.min(e, sl), border_color=color.new(cBear, 40), bgcolor=color.new(cBear, 85)))
 if barstate.isconfirmed and array.size(sgDir) > 0
+    for bb in sgBG
+        box.set_right(bb, bar_index)
+    for bb in sgBR
+        box.set_right(bb, bar_index)
     for i = array.size(sgDir) - 1 to 0
         dI = array.get(sgDir, i)
         eI = array.get(sgE, i)
@@ -1936,6 +1946,8 @@ if barstate.isconfirmed and array.size(sgDir) > 0
             array.remove(sgSL, i)
             array.remove(sgTP, i)
             array.remove(sgLbl, i)
+            array.remove(sgBG, i)
+            array.remove(sgBR, i)
 // only the first bar of a setup is a new SIG (no repeats while the same checklist stays green)
 var int goPrevDir = 0
 goNew = goNow and goDir != goPrevDir
@@ -1946,6 +1958,7 @@ if barstate.isconfirmed and goNew and not na(goTP) and not na(goSL) and array.si
     array.push(sgE, close)
     array.push(sgSL, goSL)
     array.push(sgTP, goTP)
+    f_sigBox(close, goSL, goTP)
     array.push(sgLbl, label.new(bar_index, goDir == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, goDir == 1 ? "SIG▲" : "SIG▼", style=goDir == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.yellow, 20), textcolor=color.black, tooltip="SIG  entry " + str.tostring(close, format.mintick) + "  SL " + str.tostring(goSL, format.mintick) + "  TP " + str.tostring(goTP, format.mintick) + "  |  " + (goDir == 1 ? trgLoTxt : trgHiTxt)))
 f_stTxt(int n, int w, float r) => n == 0 ? "no trades yet" : str.tostring(n) + " trades  ·  win " + str.tostring(100.0 * w / n, "#") + "%  ·  avg " + str.tostring(r / n, "#.##") + "R  ·  total " + str.tostring(r, "#.#") + "R"
 f_drawSig() =>
@@ -2113,6 +2126,7 @@ f_draw2220() =>
             array.push(sgE, e)
             array.push(sgSL, rvSlC)
             array.push(sgTP, tpR)
+            f_sigBox(e, rvSlC, tpR)
             array.push(sgLbl, label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, d == 1 ? "SIG▲" : "SIG▼", style=d == 1 ? label.style_label_up : label.style_label_down, size=size.tiny, color=color.new(color.yellow, 20), textcolor=color.black, tooltip="SIG (REV)  " + tipTxt))
         if nOpen < revMax
             array.push(aDir, d)
