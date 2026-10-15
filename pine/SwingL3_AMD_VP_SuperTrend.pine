@@ -119,10 +119,10 @@ tblPos      = input.string("Top Right", "Table position", options=["Top Right", 
 tblSize     = input.string("Small", "Text size", options=["Tiny", "Small", "Normal"], group=grpD)
 showTable   = input.bool(true, "Show dashboard table", group=grpD)
 showScen    = input.bool(true, "Scenario plan engine (feeds the analysis note)", group=grpD)
-chkPinTl = false   // fixed (checklist option removed); default kept
-chkPinWin = 8   // fixed (checklist option removed); default kept
-chkRule = "Score"   // fixed (checklist option removed); default kept
-chkAddRev = true   // fixed (checklist option removed); default kept
+chkPinTl    = input.bool(false, "Checklist: pin bar → TL combo (pin = location)", group=grpD, tooltip="A pin bar followed by a same-direction TL break within the window counts as location + trigger, even if the pin was not at a level. Stop goes behind the pin.")
+chkPinWin   = input.int(8, "Checklist: pin → TL window (bars)", minval=1, maxval=20, group=grpD)
+chkRule     = input.string("Score", "Checklist: trigger rule", options=["Score", "2 of 3", "Any 1", "Pin or TL (classic)"], group=grpD, tooltip="2 of 3: two different triggers (pin / TL / REV) in the same direction within the memory. Any 1: a single trigger after the location (classic).")
+chkAddRev   = input.bool(true, "Checklist: REV setups also fire SIG", group=grpD, tooltip="A REV setup (L2/L3/AMD sweep then TL or D↑/D↓, its own SL/TP) is also shown and counted as SIG, without the direction/location checks.")
 grpSc = "⑥b Trigger score"
 scMin   = input.float(4.0, "Score: minimum to trigger", minval=1, step=0.5, group=grpSc)
 scMem   = input.int(6, "Score: memory (bars; full points ≤ 3, half after)", minval=2, maxval=20, group=grpSc)
@@ -137,13 +137,13 @@ wL2     = input.float(1.0, "L2", minval=0, step=0.5, group=grpSc, inline="w3")
 wL1     = input.float(2.0, "L1", minval=0, step=0.5, group=grpSc, inline="w3")
 wScVol  = input.float(0.5, "Vol", minval=0, step=0.5, group=grpSc, inline="w4")
 wAbs    = input.float(0.5, "Absorb", minval=0, step=0.5, group=grpSc, inline="w4")
-chkMem = 6   // fixed (checklist option removed); default kept
-chkMaxOpen = 3   // fixed (checklist option removed); default kept
-chkWin = 4   // fixed (checklist option removed); default kept
-chkTrig = "Pin bar + TL"   // fixed (checklist option removed); default kept
-chkL1Hl = true   // fixed (checklist option removed); default kept
-chkStLv = true   // fixed (checklist option removed); default kept
-chkAmdLv = true   // fixed (checklist option removed); default kept
+chkMem      = input.int(6, "Checklist: trigger memory (bars)", minval=2, maxval=20, group=grpD, tooltip="Trigger = 2 of 3 (pin bar, TL break, REV move = L2/L3/AMD sweep or D↑/D↓) in the same direction within this many bars, in any order.")
+chkMaxOpen  = input.int(3, "Checklist: max simultaneous SIG trades", minval=1, maxval=10, group=grpD)
+chkWin      = input.int(4, "Checklist: location → trigger window (bars)", minval=1, maxval=12, group=grpD)
+chkTrig     = input.string("Pin bar + TL", "Checklist: trigger", options=["Pin bar + TL", "Pin bar only", "TL only"], group=grpD)
+chkL1Hl     = input.bool(true, "Checklist: fresh L1 HL / LH in SuperTrend direction as location", group=grpD, tooltip="When a new L1 higher low (SuperTrend up) or lower high (SuperTrend down) is confirmed, it counts as a location; stop goes behind that pivot.")
+chkStLv     = input.bool(true, "Checklist: SuperTrend line as location", group=grpD)
+chkAmdLv    = input.bool(true, "Checklist: AMD range edges as location", group=grpD)
 showRev     = input.bool(true, "REV setup: liquidity sweep + TL", group=grpD, tooltip="Any TL break (no trend filter) that comes within N bars after price swept an L1/L2/L3 extreme or the AMD range edge on the opposite side. Own labels and stats.")
 revWin      = input.int(8, "REV: sweep → TL window (bars)", minval=2, maxval=40, group=grpD)
 revMinTp    = input.float(5.0, "REV: min profit to target ($)", minval=1, step=0.5, group=grpD, tooltip="Target = nearest opposite liquidity (L1/L2/L3/HTF/VAH/VAL/POC/PDH/PDL/AMD edge) at least this far that also gives the min R:R; otherwise the next level is tried.")
@@ -154,7 +154,7 @@ revNoL1     = input.bool(true, "REV: ignore L1 sweeps (L2/L3/AMD only)", group=g
 revMax      = input.int(3, "REV: max simultaneous trades", minval=1, maxval=10, group=grpD, tooltip="If this many REV trades are already open, a new REV signal is not recorded (no label).")
 revBe       = input.float(0.0, "REV: break-even after profit ($, 0 = off)", minval=0, step=0.5, group=grpD, tooltip="Once price has moved this far in favour, the stop moves to entry (applied from the next candle). A stop hit after that counts as 0R.")
 revBig      = input.float(1.5, "REV: big trigger candle (x ATR) → limit at candle middle", minval=0.5, step=0.1, group=grpD)
-chkMinRR = 1.5   // fixed (checklist option removed); default kept
+chkMinRR    = input.float(1.5, "Checklist: min R:R", minval=0.5, step=0.1, group=grpD)
 sigTpUsd    = input.float(0.0, "SIG TP: fixed profit ($ per oz, 0 = structure levels)", minval=0.0, step=0.5, group=grpD, tooltip="0 = TP is the nearest structure level (L1/L2/L3/HTF/VAH/VAL/PDH/PDL) with at least the min R:R. Any value above 0 = TP is exactly this many dollars from entry (gold: $1 move = $1 per oz). The signal is rejected if the stop is wider than the TP distance (R:R below the min R:R).")
 planSlBuf   = input.float(0.25, "Scenario stop buffer beyond level (x ATR)", minval=0, step=0.05, group=grpD, tooltip="Gold 15m: wicks often overshoot swing levels by 0.1–0.2 ATR (stop hunts).")
 planCtr     = input.bool(true, "Block counter-trend side when confluence >= threshold", group=grpD)
