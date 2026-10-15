@@ -73,7 +73,7 @@ useOrderBlockWicks = input.bool(false, "Use candle wicks for order block", group
 groupStops = "06. Stop validation"
 stopBufferATR = input.float(0.10, "Sweep stop buffer (ATR)", minval=0.0, step=0.05, group=groupStops)
 minimumStopATR = input.float(0.50, "Minimum stop distance (ATR)", minval=0.1, step=0.05, group=groupStops)
-maximumStopATR = input.float(4.00, "Maximum stop distance (ATR)", minval=0.5, step=0.10, group=groupStops)
+maximumStopATR = input.float(6.00, "Maximum stop distance (ATR)", minval=0.5, step=0.10, group=groupStops)
 
 // -----------------------------------------------------------------------------
 // Helpers

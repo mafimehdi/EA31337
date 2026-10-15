@@ -69,7 +69,7 @@ input bool              InpUseOrderBlockWicks        = false;
 // --- Stop validation ---------------------------------------------------------
 input double            InpStopBufferATR             = 0.10;
 input double            InpMinimumStopATR            = 0.50;
-input double            InpMaximumStopATR            = 4.00;
+input double            InpMaximumStopATR            = 6.00;
 
 // --- Tester diagnostics ------------------------------------------------------
 // Prints one compact pipeline summary when the EA/test ends. It is useful for
@@ -146,6 +146,10 @@ long     g_retestsPassingStop = 0;
 long     g_longSetups = 0;
 long     g_shortSetups = 0;
 long     g_openedTrades = 0;
+long     g_bullStopRejections = 0;
+long     g_bearStopRejections = 0;
+double   g_widestBullStopATR = 0.0;
+double   g_widestBearStopATR = 0.0;
 
 //+------------------------------------------------------------------+
 //| Initialization                                                   |
@@ -196,6 +200,10 @@ int OnInit() {
   g_longSetups = 0;
   g_shortSetups = 0;
   g_openedTrades = 0;
+  g_bullStopRejections = 0;
+  g_bearStopRejections = 0;
+  g_widestBullStopATR = 0.0;
+  g_widestBearStopATR = 0.0;
 
   g_lastSignalBar = iTime(g_symbol, InpSignalTimeframe, 0);
   Print("SMC XAU M15 EA initialized for ", g_symbol, ". Waiting for the next closed M15 candle.");
@@ -215,6 +223,9 @@ void OnDeinit(const int reason) {
           g_retestsPassingRange, "/", g_retestsPassingChop, "/", g_retestsPassingStop,
           " | setups L/S=", g_longSetups, "/", g_shortSetups,
           " | opened=", g_openedTrades);
+    Print("SMC diagnostics | stop rejects L/S=", g_bullStopRejections, "/", g_bearStopRejections,
+          " | widest rejected stop ATR L/S=", DoubleToString(g_widestBullStopATR, 2), "/",
+          DoubleToString(g_widestBearStopATR, 2), " | configured maximum=", DoubleToString(InpMaximumStopATR, 2));
   }
   Print("SMC XAU M15 EA stopped. Reason: ", reason);
 }
@@ -474,13 +485,24 @@ bool EvaluateClosedBar(SignalResult &result) {
         bool rangePass = (bullRetest && htfBull && closePrice > m15Ema && rangeDirection == 1) ||
                          (bearRetest && htfBear && closePrice < m15Ema && rangeDirection == -1);
         bool chopPass = rangePass && regimeOK;
-        bool stopPass = (bullRetest && chopPass && state.bullFvgObOK && longStopValid) ||
-                        (bearRetest && chopPass && state.bearFvgObOK && shortStopValid);
+        bool bullPreStopPass = bullRetest && htfBull && closePrice > m15Ema && rangeDirection == 1 &&
+                               regimeOK && state.bullFvgObOK;
+        bool bearPreStopPass = bearRetest && htfBear && closePrice < m15Ema && rangeDirection == -1 &&
+                               regimeOK && state.bearFvgObOK;
+        bool stopPass = (bullPreStopPass && longStopValid) || (bearPreStopPass && shortStopValid);
         if (hasRetest && biasPass) g_retestsPassingBias++;
         if (hasRetest && emaPass) g_retestsPassingEma++;
         if (hasRetest && rangePass) g_retestsPassingRange++;
         if (hasRetest && chopPass) g_retestsPassingChop++;
         if (hasRetest && stopPass) g_retestsPassingStop++;
+        if (bullPreStopPass && !longStopValid) {
+          g_bullStopRejections++;
+          g_widestBullStopATR = MathMax(g_widestBullStopATR, longRisk / atr);
+        }
+        if (bearPreStopPass && !shortStopValid) {
+          g_bearStopRejections++;
+          g_widestBearStopATR = MathMax(g_widestBearStopATR, shortRisk / atr);
+        }
         if (longSetup) g_longSetups++;
         if (shortSetup) g_shortSetups++;
       }
