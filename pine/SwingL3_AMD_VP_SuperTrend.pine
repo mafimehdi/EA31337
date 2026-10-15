@@ -664,7 +664,7 @@ f_draw626() =>
             rTxt = "B:" + bStr + "(" + str.tostring(bPct) + "%) | S:" + sStr + "(" + str.tostring(sPct) + "%)"
             tCol = color.white
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
-            array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + vpTxtW, bot, border_color=na, bgcolor=na, text=rTxt, text_color=tCol, text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_middle, text_wrap=text.wrap_none))
+            array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + vpTxtW, bot, border_color=na, bgcolor=na, text=rTxt, text_color=tCol, text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_center))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
