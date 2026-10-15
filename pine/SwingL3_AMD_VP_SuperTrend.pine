@@ -640,11 +640,17 @@ var box[] vpBoxes = array.new_box()
 // The row text is therefore anchored on the LAST REAL BAR (same xloc.bar_index mechanism used by every other
 // label of this script that renders correctly) and the label body extends to the right (style_label_left),
 // i.e. over the histogram bar of that row.
-vpTxtW = 70   // width (bars) of the transparent text box drawn over each row
+// one bar duration (ms-safe): used to place row text on the future histogram area with xloc.bar_time
+vpBarDur = nz(time - time[1])
+var label[] vpLbls = array.new_label()
 f_draw626() =>
     for bx in vpBoxes
         box.delete(bx)
     array.clear(vpBoxes)
+    for vpL in vpLbls
+        label.delete(vpL)
+    array.clear(vpLbls)
+    vpTx = time + 15 * vpBarDur
     mx = array.max(vpVols)
     for r = 0 to vpRows - 1
         v = array.get(vpVols, r)
@@ -664,7 +670,7 @@ f_draw626() =>
             rTxt = "B:" + bStr + "(" + str.tostring(bPct) + "%) | S:" + sStr + "(" + str.tostring(sPct) + "%)"
             tCol = color.white
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
-            array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + vpTxtW, bot, border_color=na, bgcolor=na, text=rTxt, text_color=tCol, text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_center))
+            array.push(vpLbls, label.new(vpTx, (top + bot) * 0.5, rTxt, xloc=xloc.bar_time, style=label.style_label_left, color=color.new(color.black, 100), textcolor=color.white, size=size.tiny, textalign=text.align_left))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
