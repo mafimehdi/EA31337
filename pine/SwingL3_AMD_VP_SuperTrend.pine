@@ -119,11 +119,10 @@ tblPos      = input.string("Top Right", "Table position", options=["Top Right", 
 tblSize     = input.string("Small", "Text size", options=["Tiny", "Small", "Normal"], group=grpD)
 showTable   = input.bool(true, "Show dashboard table", group=grpD)
 showScen    = input.bool(true, "Scenario plan engine (feeds the analysis note)", group=grpD)
-showScenTbl = input.bool(false, "Show scenario table + plan lines", group=grpD)
-chkPinTl    = input.bool(false, "Checklist: pin bar → TL combo (pin = location)", group=grpD, tooltip="A pin bar followed by a same-direction TL break within the window counts as location + trigger, even if the pin was not at a level. Stop goes behind the pin.")
-chkPinWin   = input.int(8, "Checklist: pin → TL window (bars)", minval=1, maxval=20, group=grpD)
-chkRule     = input.string("Score", "Checklist: trigger rule", options=["Score", "2 of 3", "Any 1", "Pin or TL (classic)"], group=grpD, tooltip="2 of 3: two different triggers (pin / TL / REV) in the same direction within the memory. Any 1: a single trigger after the location (classic).")
-chkAddRev   = input.bool(true, "Checklist: REV setups also fire SIG", group=grpD, tooltip="A REV setup (L2/L3/AMD sweep then TL or D↑/D↓, its own SL/TP) is also shown and counted as SIG, without the direction/location checks.")
+chkPinTl = false   // fixed (checklist option removed); default kept
+chkPinWin = 8   // fixed (checklist option removed); default kept
+chkRule = "Score"   // fixed (checklist option removed); default kept
+chkAddRev = true   // fixed (checklist option removed); default kept
 grpSc = "⑥b Trigger score"
 scMin   = input.float(4.0, "Score: minimum to trigger", minval=1, step=0.5, group=grpSc)
 scMem   = input.int(6, "Score: memory (bars; full points ≤ 3, half after)", minval=2, maxval=20, group=grpSc)
@@ -138,13 +137,13 @@ wL2     = input.float(1.0, "L2", minval=0, step=0.5, group=grpSc, inline="w3")
 wL1     = input.float(2.0, "L1", minval=0, step=0.5, group=grpSc, inline="w3")
 wScVol  = input.float(0.5, "Vol", minval=0, step=0.5, group=grpSc, inline="w4")
 wAbs    = input.float(0.5, "Absorb", minval=0, step=0.5, group=grpSc, inline="w4")
-chkMem      = input.int(6, "Checklist: trigger memory (bars)", minval=2, maxval=20, group=grpD, tooltip="Trigger = 2 of 3 (pin bar, TL break, REV move = L2/L3/AMD sweep or D↑/D↓) in the same direction within this many bars, in any order.")
-chkMaxOpen  = input.int(3, "Checklist: max simultaneous SIG trades", minval=1, maxval=10, group=grpD)
-chkWin      = input.int(4, "Checklist: location → trigger window (bars)", minval=1, maxval=12, group=grpD)
-chkTrig     = input.string("Pin bar + TL", "Checklist: trigger", options=["Pin bar + TL", "Pin bar only", "TL only"], group=grpD)
-chkL1Hl     = input.bool(true, "Checklist: fresh L1 HL / LH in SuperTrend direction as location", group=grpD, tooltip="When a new L1 higher low (SuperTrend up) or lower high (SuperTrend down) is confirmed, it counts as a location; stop goes behind that pivot.")
-chkStLv     = input.bool(true, "Checklist: SuperTrend line as location", group=grpD)
-chkAmdLv    = input.bool(true, "Checklist: AMD range edges as location", group=grpD)
+chkMem = 6   // fixed (checklist option removed); default kept
+chkMaxOpen = 3   // fixed (checklist option removed); default kept
+chkWin = 4   // fixed (checklist option removed); default kept
+chkTrig = "Pin bar + TL"   // fixed (checklist option removed); default kept
+chkL1Hl = true   // fixed (checklist option removed); default kept
+chkStLv = true   // fixed (checklist option removed); default kept
+chkAmdLv = true   // fixed (checklist option removed); default kept
 showRev     = input.bool(true, "REV setup: liquidity sweep + TL", group=grpD, tooltip="Any TL break (no trend filter) that comes within N bars after price swept an L1/L2/L3 extreme or the AMD range edge on the opposite side. Own labels and stats.")
 revWin      = input.int(8, "REV: sweep → TL window (bars)", minval=2, maxval=40, group=grpD)
 revMinTp    = input.float(5.0, "REV: min profit to target ($)", minval=1, step=0.5, group=grpD, tooltip="Target = nearest opposite liquidity (L1/L2/L3/HTF/VAH/VAL/POC/PDH/PDL/AMD edge) at least this far that also gives the min R:R; otherwise the next level is tried.")
@@ -155,7 +154,7 @@ revNoL1     = input.bool(true, "REV: ignore L1 sweeps (L2/L3/AMD only)", group=g
 revMax      = input.int(3, "REV: max simultaneous trades", minval=1, maxval=10, group=grpD, tooltip="If this many REV trades are already open, a new REV signal is not recorded (no label).")
 revBe       = input.float(0.0, "REV: break-even after profit ($, 0 = off)", minval=0, step=0.5, group=grpD, tooltip="Once price has moved this far in favour, the stop moves to entry (applied from the next candle). A stop hit after that counts as 0R.")
 revBig      = input.float(1.5, "REV: big trigger candle (x ATR) → limit at candle middle", minval=0.5, step=0.1, group=grpD)
-chkMinRR    = input.float(1.5, "Checklist: min R:R", minval=0.5, step=0.1, group=grpD)
+chkMinRR = 1.5   // fixed (checklist option removed); default kept
 sigTpR      = input.float(0.0, "SIG TP: fixed R multiple (0 = structure levels)", minval=0.0, step=0.1, group=grpD, tooltip="0 = TP is the nearest structure level (L1/L2/L3/HTF/VAH/VAL/PDH/PDL) with at least the min R:R. Any value above 0 = TP is exactly this many R from entry (e.g. 2.0 = 2R). Keep it at or above the min R:R, otherwise the signal is rejected.")
 planSlBuf   = input.float(0.25, "Scenario stop buffer beyond level (x ATR)", minval=0, step=0.05, group=grpD, tooltip="Gold 15m: wicks often overshoot swing levels by 0.1–0.2 ATR (stop hunts).")
 planCtr     = input.bool(true, "Block counter-trend side when confluence >= threshold", group=grpD)
@@ -167,7 +166,6 @@ pinOpp      = input.float(10, "Pin bar: max opposite wick (% of range)", minval=
 pinProt     = input.bool(true, "Pin bar: wick must protrude beyond previous bars", group=grpD)
 pinLook     = input.int(3, "Pin bar: protrude beyond last N bars", minval=1, maxval=10, group=grpD)
 pinMinAtr   = input.float(0.5, "Pin bar: min range (x ATR)", minval=0, step=0.1, group=grpD)
-scenPos     = input.string("Bottom Right", "Scenario table position", options=["Bottom Right", "Bottom Left", "Top Left", "Middle Right", "Top Right"], group=grpD)
 
 // ═════════════════════════════ HELPERS ═════════════════════════════
 cBull = color.new(#26a69a, 0)
@@ -637,20 +635,16 @@ plot(vpVAH, "VAH", color=color.new(color.aqua, 30), style=plot.style_stepline)
 plot(vpVAL, "VAL", color=color.new(color.fuchsia, 30), style=plot.style_stepline)
 
 var box[] vpBoxes = array.new_box()
-var label[] vpLbls = array.new_label()
 // ROOT CAUSE FIX: boxes accept "bar_index + N" (future) coordinates, but label / line objects anchored on a
 // non-existent future bar are NOT rendered by TradingView (the drawing is created but stays invisible).
 // The row text is therefore anchored on the LAST REAL BAR (same xloc.bar_index mechanism used by every other
 // label of this script that renders correctly) and the label body extends to the right (style_label_left),
 // i.e. over the histogram bar of that row.
+vpTxtW = 70   // width (bars) of the transparent text box drawn over each row
 f_draw626() =>
     for bx in vpBoxes
         box.delete(bx)
     array.clear(vpBoxes)
-    for vpL in vpLbls
-        label.delete(vpL)
-    array.clear(vpLbls)
-    xTxt = bar_index
     mx = array.max(vpVols)
     for r = 0 to vpRows - 1
         v = array.get(vpVols, r)
@@ -668,9 +662,9 @@ f_draw626() =>
             bStr = bv >= 1e6 ? str.tostring(bv / 1e6, "#.#") + "M" : bv >= 1e3 ? str.tostring(bv / 1e3, "#.#") + "K" : str.tostring(math.round(bv))
             sStr = sv >= 1e6 ? str.tostring(sv / 1e6, "#.#") + "M" : sv >= 1e3 ? str.tostring(sv / 1e3, "#.#") + "K" : str.tostring(math.round(sv))
             rTxt = "B:" + bStr + "(" + str.tostring(bPct) + "%) | S:" + sStr + "(" + str.tostring(sPct) + "%)"
-            tCol = isPoc ? color.black : inVA ? color.white : color.rgb(210, 215, 225)
+            tCol = color.white
             array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + w, bot, border_color=na, bgcolor=c))
-            array.push(vpLbls, label.new(xTxt, (top + bot) * 0.5, rTxt, style=label.style_label_left, color=color.new(color.black, 100), textcolor=tCol, size=size.tiny, textalign=text.align_left))
+            array.push(vpBoxes, box.new(bar_index + 15, top, bar_index + 15 + vpTxtW, bot, border_color=na, bgcolor=na, text=rTxt, text_color=tCol, text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_middle, text_wrap=text.wrap_none))
     0
 if showVP and barstate.islast and not na(vpPOC)
     f_draw626()
@@ -707,6 +701,7 @@ else
     volState := rvolN >= rvolThr and math.abs(deltaPct) >= 0.3 ? (deltaPct > 0 ? 1 : -1) : 0
     volTxt := "RVOL" + str.tostring(volN) + " " + str.tostring(rvolN, "#.##") + " | Δ " + str.tostring(deltaPct * 100, "#") + "%" + (volState == 0 ? " (weak)" : volState > 0 ? " buyers" : " sellers")
 
+obMaxLen = 60   // an OB box ends at most this many bars after it was created
 // ═════════════════════════ ⑦ ORDER BLOCKS ═════════════════════════
 type Zone
     float top
@@ -833,7 +828,7 @@ if array.size(zones) > 0
             box.delete(z.bx)
             array.remove(zones, i)
         else if not na(z.bx)
-            box.set_right(z.bx, bar_index + 5)
+            box.set_right(z.bx, math.min(bar_index + 5, z.born + obMaxLen))
             if z.state == 1
                 box.set_border_style(z.bx, line.style_dashed)
 
@@ -1393,14 +1388,6 @@ f_above(float[] v, string[] n, float px) =>
 
 f_rr(float e, float s, float t) => na(e) or na(s) or na(t) or math.abs(e - s) == 0 ? na : math.abs(t - e) / math.abs(e - s)
 fmtRR(float r) => na(r) ? "—" : str.tostring(r, "#.#")
-scPos = scenPos == "Bottom Right" ? position.bottom_right : scenPos == "Bottom Left" ? position.bottom_left : scenPos == "Top Left" ? position.top_left : scenPos == "Middle Right" ? position.middle_right : position.top_right
-var table sc = table.new(scPos, 3, 10, bgcolor=color.new(#131722, 5), border_color=color.new(color.gray, 70), border_width=1, frame_color=color.new(color.yellow, 40), frame_width=1)
-if barstate.isfirst
-    table.merge_cells(sc, 1, 7, 2, 7)
-    table.merge_cells(sc, 1, 8, 2, 8)
-    table.merge_cells(sc, 1, 9, 2, 9)
-scCell(int c, int r, string t, color bg, color tc) =>
-    table.cell(sc, c, r, t, text_color=tc, bgcolor=bg, text_size=szT, text_halign=c == 2 ? text.align_center : text.align_right)
 
 // ── Frozen two-sided plan: one BUY and one SELL scenario. The plan is NOT recalculated
 //    until one side triggers and finishes (TP/SL), or the plan is broken/expired.
@@ -1635,44 +1622,6 @@ var line lbTP = na
 var line lsE = na
 var line lsSL = na
 var line lsTP = na
-if showScen and showScenTbl
-    // no history: lines of a finished plan are removed
-    if planEnd
-        for l in pLines
-            line.delete(l)
-        array.clear(pLines)
-        for lb in pLbls
-            label.delete(lb)
-        array.clear(pLbls)
-    // new plan created this bar → new set of lines
-    if pSt == 1 and pBar == bar_index
-        lbE := line.new(bar_index, bE, bar_index + 1, bE, color=cBull, width=2)
-        lbSL := line.new(bar_index, bSL, bar_index + 1, bSL, color=color.new(cBull, 60), style=line.style_dashed)
-        lbTP := line.new(bar_index, bTP, bar_index + 1, bTP, color=color.new(cBull, 30), style=line.style_dotted)
-        lsE := line.new(bar_index, sE, bar_index + 1, sE, color=cBear, width=2)
-        lsSL := line.new(bar_index, sSL, bar_index + 1, sSL, color=color.new(cBear, 60), style=line.style_dashed)
-        lsTP := line.new(bar_index, sTP, bar_index + 1, sTP, color=color.new(cBear, 30), style=line.style_dotted)
-        array.push(pLines, lbE)
-        array.push(pLines, lbSL)
-        array.push(pLines, lbTP)
-        array.push(pLines, lsE)
-        array.push(pLines, lsSL)
-        array.push(pLines, lsTP)
-        array.push(pLbls, label.new(bar_index, sE, "#" + str.tostring(pNo), style=label.style_label_lower_right, size=size.tiny, color=color.new(color.yellow, 60), textcolor=color.white))
-        while array.size(pLines) > 6
-            line.delete(array.shift(pLines))
-        while array.size(pLbls) > 1
-            label.delete(array.shift(pLbls))
-    // extend the live side(s) of the running plan
-    else if pSt >= 1
-        if pSt != 3
-            line.set_x2(lbE, bar_index)
-            line.set_x2(lbSL, bar_index)
-            line.set_x2(lbTP, bar_index)
-        if pSt != 2
-            line.set_x2(lsE, bar_index)
-            line.set_x2(lsSL, bar_index)
-            line.set_x2(lsTP, bar_index)
 plotshape(planBuy, "Plan BUY triggered", shape.labelup, location.belowbar, cBull, size=size.tiny, text="PLAN BUY", textcolor=color.white)
 plotshape(planSell, "Plan SELL triggered", shape.labeldown, location.abovebar, cBear, size=size.tiny, text="PLAN SELL", textcolor=color.white)
 alertcondition(planBuy, "Plan BUY triggered", "SL3-AMD-VP: scenario BUY triggered on {{ticker}} @ {{close}}")
@@ -1680,85 +1629,6 @@ alertcondition(planSell, "Plan SELL triggered", "SL3-AMD-VP: scenario SELL trigg
 alertcondition(tlBrkUp, "Trendline resistance broken", "SL3-AMD-VP: daily resistance trendline broken up on {{ticker}} @ {{close}}")
 alertcondition(tlBrkDn, "Trendline support broken", "SL3-AMD-VP: daily support trendline broken down on {{ticker}} @ {{close}}")
 alertcondition(planDone, "Plan finished", "SL3-AMD-VP: scenario trade finished on {{ticker}}")
-
-f_draw1643() =>
-    bRR = f_rr(bE, bSL, bTP)
-    sRR = f_rr(sE, sSL, sTP)
-    bWith = pBias == 1
-    stTxt = pSt == 1 ? "WAITING" : pSt == 2 ? "BUY ACTIVE" : pSt == 3 ? "SELL ACTIVE" : "—"
-    stCol = pSt == 2 ? color.new(cBull, 20) : pSt == 3 ? color.new(cBear, 20) : color.new(color.yellow, 30)
-    age = na(pBar) ? 0 : bar_index - pBar
-    conf = (pBias == 1 ? stState < 0 : stState > 0) ? "  ⚠ SuperTrend against" : ""
-    scCell(0, 0, "PLAN #" + str.tostring(pNo), color.new(#131722, 0), color.yellow)
-    scCell(1, 0, (pSt >= 2 ? "trade open " + str.tostring(bar_index - actBar) + " bars (plan built " + str.tostring(age) + " bars ago)" : "waiting " + str.tostring(age) + " bars (expires " + str.tostring(planExp) + ")") + "  |  bias " + (pBias == 1 ? "LONG" : "SHORT") + conf, color.new(#131722, 0), color.white)
-    scCell(2, 0, stTxt, stCol, pSt == 1 ? color.black : color.white)
-    scCell(0, 1, "Price now", color(na), color.white)
-    scCell(1, 1, fmt(close) + "  |  to BUY " + str.tostring((close - bE) / atr14, "#.#") + " ATR  ·  to SELL " + str.tostring((sE - close) / atr14, "#.#") + " ATR", color(na), color.white)
-    scCell(2, 1, "", color(na), color.white)
-    scCell(0, 2, "① BUY", color(na), cBull)
-    scCell(1, 2, "at " + fmt(bE) + " (" + bEn + ") → bull candle close  ·  SL " + fmt(bSL) + " (" + bSLn + ")  ·  TP " + fmt(bTP) + " (" + bTPn + ")", color(na), color.white)
-    scCell(2, 2, "R:R " + fmtRR(bRR) + (bWith ? "  full" : "  half"), pSt == 2 ? color.new(cBull, 20) : pSt == 3 ? color.new(cNeu, 70) : color.new(cBull, 60), color.white)
-    scCell(0, 3, "② SELL", color(na), cBear)
-    scCell(1, 3, "at " + fmt(sE) + " (" + sEn + ") → bear candle close  ·  SL " + fmt(sSL) + " (" + sSLn + ")  ·  TP " + fmt(sTP) + " (" + sTPn + ")", color(na), color.white)
-    scCell(2, 3, "R:R " + fmtRR(sRR) + (bWith ? "  half" : "  full"), pSt == 3 ? color.new(cBear, 20) : pSt == 2 ? color.new(cNeu, 70) : color.new(cBear, 60), color.white)
-    scCell(0, 4, "   status", color(na), color.gray)
-    openR = pSt == 2 ? (close - actE) / math.max(actE - bSL, syminfo.mintick) : pSt == 3 ? (actE - close) / math.max(sSL - actE, syminfo.mintick) : na
-    string bWhy = ""
-    string sWhy = ""
-    if pSt == 1
-        if bOff
-            bWhy := "BUY dead (support lost)"
-        else
-            bWhy := (planCtr and pBias == -1 and scorePct <= -minScorePct ? "confluence " + str.tostring(scorePct, "#") + "% SHORT · " : "") + (locDn ? "15m lower high " + fmt(locHiRef) + " · " : pBias == -1 and not locUp ? "needs 15m higher low · " : "") + (tlBlkB ? "support TL broken ▼ · " : pBias == -1 and tlNeedB ? "needs TL▲ · " : "")
-            bWhy := bWhy == "" ? (bHit ? "BUY: zone touched, need bull close" : "BUY: armed") : "BUY blocked: " + bWhy
-        if sOff
-            sWhy := "SELL dead (resistance broken)"
-        else
-            sWhy := (planCtr and pBias == 1 and scorePct >= minScorePct ? "confluence " + str.tostring(scorePct, "#") + "% LONG · " : "") + (locUp ? "15m higher low " + fmt(locLoRef) + " · " : pBias == 1 and not locDn ? "needs 15m lower high · " : "") + (tlBlkS ? "resistance TL broken ▲ · " : pBias == 1 and tlNeedS ? "needs TL▼ · " : "")
-            sWhy := sWhy == "" ? (sHit ? "SELL: zone touched, need bear close" : "SELL: armed") : "SELL blocked: " + sWhy
-    scCell(1, 4, pSt == 1 ? bWhy + "   |   " + sWhy : pSt == 2 ? "BUY from " + fmt(actE) + "  ·  open " + str.tostring(openR, "#.##") + "R  ·  SELL cancelled" : pSt == 3 ? "SELL from " + fmt(actE) + "  ·  open " + str.tostring(openR, "#.##") + "R  ·  BUY cancelled" : "—", color(na), color.white)
-    scCell(2, 4, (bHit and not bOff) or (sHit and not sOff) ? "ZONE TOUCHED" : "", (bHit and not bOff) or (sHit and not sOff) ? color.new(color.yellow, 30) : color(na), color.black)
-    scCell(0, 5, "Last plan", color(na), color.gray)
-    scCell(1, 5, lastRes, color(na), color.white)
-    scCell(2, 5, "", lastCol, color.white)
-    scCell(0, 6, "Market now", color(na), color.gray)
-    scCell(1, 6, "score " + str.tostring(scorePct, "#") + "%  |  " + suggTxt() + "  |  volume: " + volTxt, color(na), color.white)
-    scCell(2, 6, "", color(na), color.white)
-    // ── Persian advice for the frozen plan ──
-    string adv1 = ""
-    string adv2 = ""
-    string adv3 = ""
-    if pSt == 1
-        adv1 := "خرید" + (bWith ? "" : " (نصف حجم)") + ": وقتی قیمت به " + fmt(bE) + " رسید و کندل صعودی بسته شد ← حد ضرر " + fmt(bSL) + "، هدف " + fmt(bTP) + "."
-        adv2 := "فروش" + (bWith ? " (نصف حجم)" : "") + ": وقتی قیمت به " + fmt(sE) + " رسید و کندل نزولی بسته شد ← حد ضرر " + fmt(sSL) + "، هدف " + fmt(sTP) + "."
-        if locUp
-            adv2 := "فروش فعلاً مسدود است: کف بالاتر در ۱۵ دقیقه (" + fmt(locLoRef) + "). فقط بعد از بسته شدن زیر آن."
-        if locDn
-            adv1 := "خرید فعلاً مسدود است: سقف پایین‌تر در ۱۵ دقیقه (" + fmt(locHiRef) + "). فقط بعد از بسته شدن بالای آن."
-        if bOff
-            adv1 := "خرید لغو شد: حمایت " + fmt(bE) + " از دست رفت."
-        if sOff
-            adv2 := "فروش لغو شد: مقاومت " + fmt(sE) + " شکسته شد."
-        adv3 := "بین " + fmt(bE) + " و " + fmt(sE) + " کاری نکن. این پلن تا فعال شدن یکی از دو سناریو تغییر نمی‌کند."
-    else if pSt == 2
-        adv1 := "خرید فعال از " + fmt(actE) + " ← حد ضرر " + fmt(bSL) + "، هدف " + fmt(bTP) + "."
-        adv2 := "سناریوی فروش لغو شد."
-        adv3 := "تا خوردن حد ضرر یا هدف، پلن ثابت می‌ماند."
-    else if pSt == 3
-        adv1 := "فروش فعال از " + fmt(actE) + " ← حد ضرر " + fmt(sSL) + "، هدف " + fmt(sTP) + "."
-        adv2 := "سناریوی خرید لغو شد."
-        adv3 := "تا خوردن حد ضرر یا هدف، پلن ثابت می‌ماند."
-    else
-        adv1 := "پلنی ساخته نشد (سطح کافی نیست)."
-    scCell(0, 7, "توصیه", color.new(#131722, 0), color.yellow)
-    scCell(1, 7, adv1, color.new(#131722, 0), color.white)
-    scCell(0, 8, "", color.new(#131722, 0), color.yellow)
-    scCell(1, 8, adv2, color.new(#131722, 0), color.white)
-    scCell(0, 9, "", color.new(#131722, 0), color.yellow)
-    scCell(1, 9, adv3, color.new(#131722, 0), color.orange)
-    0
-if barstate.islast and showScen and showScenTbl
-    f_draw1643()
 
 // reference price of the last plan/analysis refresh (used by anaEvt price-move check)
 anaGo = barstate.isconfirmed and bar_index >= last_bar_index - 300 and (na(anaRefPx) or anaHour or anaEvt != "")
